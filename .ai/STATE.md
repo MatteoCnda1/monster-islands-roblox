@@ -4,37 +4,53 @@
 > Partie haute = maintenue à la main (ou via `/handoff`). Partie basse = régénérée par `.ai/ctx.sh`.
 
 ## 🎯 Focus actuel
-- _À préciser._ (voir le snapshot auto plus bas pour la branche et les commits récents)
+- Architecture Git à deux branches (`main` pour production/releases, `dev` pour le développement actif).
+- Tranche verticale (Vertical Slice) opérationnelle et testable dans Roblox Studio.
 
 ## ✅ Fait récemment
-- _À compléter._
+- Repository GitHub officiel créé et lié : `https://github.com/MatteoCnda1/monster-islands-roblox`.
+- Branche `dev` créée, configurée et poussée sur le remote `origin`.
+- Mise en place de la rigueur de développement : hook Git `pre-commit` automatisé (`tools/pre-commit.sh`) bloquant tout commit dont les tests unitaires ou la compilation Rojo échouent.
+- Documentation mise à jour (`CONTRIBUTING.md`, `README.md`, 8 documents de conception dans `docs/`).
+- Installation de Roblox Studio sur Linux Debian via Flatpak/Vinegar avec lanceur `tools/studio.sh`.
+- Tranche verticale complète : 5 monstres prototypes, parcelles 3D, économie sécurisée, breeding avec hérédité génétique, combat tour par tour et interface utilisateur.
 
 ## 🔧 En cours / à faire
-- [ ] _À compléter._
+- [ ] Tester le lancement du projet dans Roblox Studio via `./tools/studio.sh`.
+- [ ] Tester les interactions en jeu (achat de la parcelle 2, incubation d'un œuf, combat d'entraînement).
+- [ ] Préparer la Phase 2 de la roadmap (bâtiments interactifs, habitats élémentaires, quêtes dynamiques).
 
 ## 🧠 Décisions clés (ne pas re-débattre)
-- Luau **mode strict**. Repo **local** (pas de remote) : versionnement local, fusion manuelle.
+- **Architecture Server-Authoritative** : Le client ne valide aucun argent, aucun monstre, aucun dégât.
+- **Stratégie Git** : Branche `main` (stable/livrable), branche `dev` (intégration active). Les nouvelles fonctionnalités démarrent sur `feature/<nom>` depuis `dev`.
+- **Barrière qualité automatique** : Tout commit passe obligatoirement les 17 tests unitaires et le build Rojo (`.git/hooks/pre-commit`).
+- **Luau strict / modulaire** : Tous les types centralisés dans `src/shared/Types.luau`.
 
 ## 🗺️ Où regarder
-- Code du jeu (Luau) : `src/`
+- Code du jeu (Luau) : `src/` (client, server, shared)
 - Mapping Rojo : `default.project.json`
-- Tests : `tests/` · Outils : `tools/` · Assets : `assets/` · Docs : `docs/`
-- Conventions de contribution : `CONTRIBUTING.md`
+- Tests unitaires : `tests/run_tests.luau`
+- Outils : `tools/` (`test.sh`, `build.sh`, `serve.sh`, `studio.sh`, `pre-commit.sh`)
+- Documentation de conception : `docs/`
+- Conventions de contribution & workflow : `CONTRIBUTING.md`
 
 ## 🔌 Commandes utiles
-- Sync Studio (Rojo) : `rojo serve` · Build : `rojo build -o build/`
+- Exécuter les tests : `./tools/test.sh`
+- Compiler la place Roblox : `./tools/build.sh`
+- Lancer la sync en direct Rojo : `./tools/serve.sh`
+- Ouvrir dans Roblox Studio (Linux) : `./tools/studio.sh`
 
 <!-- CTX:AUTO:START — ne rien écrire à la main sous cette ligne, régénéré par .ai/ctx.sh -->
-### 🔄 Snapshot auto — 2026-10-05 14:50
+### 🔄 Snapshot auto — 2026-10-05 18:26
 
-- **Branche** : `infra/context-kit` · **fichiers modifiés** : 3
+- **Branche** : `dev` · **fichiers modifiés** : 1
 
 - **5 derniers commits** :
+  - 277b22e docs: add branching strategy and pre-commit quality gate
+  - efe064d infra(context): kit de contexte vivant .ai/STATE.md
   - c23af59 feat: add studio.sh launcher script integrating with Vinegar on Linux
   - 42f1aa7 test: add comprehensive unit test suite for economy, combat, breeding, and plots
   - ac7b11f feat: implement client controllers, HUD, collection, breeding, and battle overlay UI
-  - 1c5f489 feat: add core Luau types, definitions, and server-authoritative services
-  - ace53d8 feat: initial project structure, Rojo configuration, and documentation
 
 - **Issues** : (gh indisponible ou non authentifié — `gh auth login`)
 <!-- CTX:AUTO:END -->

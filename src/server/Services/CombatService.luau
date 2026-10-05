@@ -1,0 +1,569 @@
+--!strict
+local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Types = require(ReplicatedStorage.Shared.Types)
+local Config = require(ReplicatedStorage.Shared.Config)
+local Logger = require(ReplicatedStorage.Shared.Utility.Logger)
+local MonsterDefinitions = require(ReplicatedStorage.Shared.MonsterDefinitions)
+local AttackDefinitions = require(ReplicatedStorage.Shared.AttackDefinitions)
+local ElementDefinitions = require(ReplicatedStorage.Shared.ElementDefinitions)
+local Network = require(ReplicatedStorage.Shared.Utility.Network)
+
+local PlayerDataService: any = nil
+local EconomyService: any = nil
+local MonsterService: any = nil
+
+type InternalCombatant = {
+	Player: Player?,
+	IsBot: boolean,
+	Name: string,
+	Team: { Types.MonsterInstance },
+	ActiveIndex: number,
+	Status: Types.CombatantStatus,
+	SubmittedAction: Types.CombatActionRequest?,
+}
+
+type BattleInstance = {
+	Id: string,
+	CombatantA: InternalCombatant,
+	CombatantB: InternalCombatant,
+	TurnNumber: number,
+	State: "WaitingForActions" | "Resolving" | "Completed",
+	TurnDeadline: number,
+}
+
+local activeBattles: { [string]: BattleInstance } = {}
+local playerActiveBattle: { [Player]: string } = {}
+
+local CombatService = {}
+
+local function createFreshStatus(): Types.CombatantStatus
+	return {
+		BurnTurns = 0,
+		PoisonTurns = 0,
+		ShieldTurns = 0,
+		StunTurns = 0,
+		SpeedBoostTurns = 0,
+	}
+end
+
+local function cloneMonsterForBattle(m: Types.MonsterInstance): Types.MonsterInstance
+	local clone = table.clone(m)
+	clone.CurrentHealth = m.MaxHealth
+	return clone
+end
+
+function CombatService:Init()
+	Logger:Info("COMBAT", "Initializing CombatService...")
+	PlayerDataService = require(script.Parent.PlayerDataService)
+	EconomyService = require(script.Parent.EconomyService)
+	MonsterService = require(script.Parent.MonsterService)
+
+	-- Remotes
+	Network.HandleFunction("SubmitBattleAction", function(player: Player, payload: any)
+		if typeof(payload) ~= "table" then return false, "Invalid payload" end
+		return self:SubmitAction(player, payload)
+	end)
+
+	Network.HandleFunction("StartBotBattle", function(player: Player)
+		return self:StartPracticeBattle(player)
+	end)
+end
+
+function CombatService:Start()
+	-- Main loop to monitor turn timeouts
+	task.spawn(function()
+		while true do
+			task.wait(1)
+			local now = os.time()
+			for battleId, battle in pairs(activeBattles) do
+				if battle.State == "WaitingForActions" and now >= battle.TurnDeadline then
+					Logger:Info("COMBAT", "Turn deadline reached for battle %s, resolving turn automatically", battleId)
+					self:_resolveTurn(battle)
+				end
+			end
+		end
+	end)
+end
+
+function CombatService:CreateBattle(playerA: Player, playerB: Player?, isBotPractice: boolean): (boolean, string?)
+	local profileA = PlayerDataService:GetProfile(playerA)
+	if not profileA then return false, "No profile for Player A" end
+
+	if playerActiveBattle[playerA] then
+		return false, "Player A is already in an active battle"
+	end
+
+	local teamA: { Types.MonsterInstance } = {}
+	for _, uuid in ipairs(profileA.TeamMonsterUUIDs) do
+		local m = profileA.Monsters[uuid]
+		if m then
+			table.insert(teamA, cloneMonsterForBattle(m))
+		end
+	end
+	if #teamA == 0 then
+		-- Fallback to first available monster
+		for _, m in pairs(profileA.Monsters) do
+			table.insert(teamA, cloneMonsterForBattle(m))
+			break
+		end
+	end
+	if #teamA == 0 then
+		return false, "Player A has no monsters"
+	end
+
+	local combatantB: InternalCombatant
+
+	if isBotPractice or not playerB then
+		-- Create a practice AI opponent
+		local botSpecies = { "mossaur", "aquaphin", "zephlyn" }
+		local chosenSpecies = botSpecies[math.random(1, #botSpecies)]
+		local def = MonsterDefinitions.Get(chosenSpecies)!
+		local calculatedStats, maxHealth = MonsterDefinitions.CalculateStats(chosenSpecies, 1, { Health=8, Attack=8, Defense=8, Speed=8 })
+
+		local botMonster: Types.MonsterInstance = {
+			UUID = HttpService:GenerateGUID(false),
+			SpeciesId = chosenSpecies,
+			Nickname = "Wild " .. def.DisplayName,
+			Level = 1,
+			XP = 0,
+			CurrentHealth = maxHealth,
+			MaxHealth = maxHealth,
+			IVs = { Health=8, Attack=8, Defense=8, Speed=8 },
+			CalculatedStats = calculatedStats,
+			SkillsEquipped = table.clone(def.Skills),
+			Parents = nil,
+			Generation = 1,
+			AssignedPlotId = nil,
+			CreatedAt = os.time(),
+		}
+
+		combatantB = {
+			Player = nil,
+			IsBot = true,
+			Name = "Trainer " .. def.DisplayName,
+			Team = { botMonster },
+			ActiveIndex = 1,
+			Status = createFreshStatus(),
+			SubmittedAction = nil,
+		}
+	else
+		local profileB = PlayerDataService:GetProfile(playerB)
+		if not profileB then return false, "No profile for Player B" end
+
+		if playerActiveBattle[playerB] then
+			return false, "Player B is already in an active battle"
+		end
+
+		local teamB: { Types.MonsterInstance } = {}
+		for _, uuid in ipairs(profileB.TeamMonsterUUIDs) do
+			local m = profileB.Monsters[uuid]
+			if m then
+				table.insert(teamB, cloneMonsterForBattle(m))
+			end
+		end
+		if #teamB == 0 then
+			for _, m in pairs(profileB.Monsters) do
+				table.insert(teamB, cloneMonsterForBattle(m))
+				break
+			end
+		end
+		if #teamB == 0 then
+			return false, "Player B has no monsters"
+		end
+
+		combatantB = {
+			Player = playerB,
+			IsBot = false,
+			Name = playerB.Name,
+			Team = teamB,
+			ActiveIndex = 1,
+			Status = createFreshStatus(),
+			SubmittedAction = nil,
+		}
+		playerActiveBattle[playerB] = "" -- placeholder
+	end
+
+	local combatantA: InternalCombatant = {
+		Player = playerA,
+		IsBot = false,
+		Name = playerA.Name,
+		Team = teamA,
+		ActiveIndex = 1,
+		Status = createFreshStatus(),
+		SubmittedAction = nil,
+	}
+
+	local battleId = HttpService:GenerateGUID(false)
+	local battle: BattleInstance = {
+		Id = battleId,
+		CombatantA = combatantA,
+		CombatantB = combatantB,
+		TurnNumber = 1,
+		State = "WaitingForActions",
+		TurnDeadline = os.time() + Config.COMBAT.TURN_TIMEOUT_SECONDS,
+	}
+
+	activeBattles[battleId] = battle
+	playerActiveBattle[playerA] = battleId
+	if playerB then
+		playerActiveBattle[playerB] = battleId
+	end
+
+	Logger:Info("COMBAT", "Started battle %s (%s vs %s)", battleId, combatantA.Name, combatantB.Name)
+
+	-- Notify player(s)
+	local startPayload = {
+		BattleId = battleId,
+		TurnNumber = 1,
+		TurnTimeout = Config.COMBAT.TURN_TIMEOUT_SECONDS,
+		YourTeam = combatantA.Team,
+		YourActiveIndex = 1,
+		OpponentName = combatantB.Name,
+		OpponentActiveMonster = combatantB.Team[1],
+		OpponentTeamCount = #combatantB.Team,
+	}
+	Network.FireClient("BattleStarted", playerA, startPayload)
+
+	if playerB then
+		local startPayloadB = {
+			BattleId = battleId,
+			TurnNumber = 1,
+			TurnTimeout = Config.COMBAT.TURN_TIMEOUT_SECONDS,
+			YourTeam = combatantB.Team,
+			YourActiveIndex = 1,
+			OpponentName = combatantA.Name,
+			OpponentActiveMonster = combatantA.Team[1],
+			OpponentTeamCount = #combatantA.Team,
+		}
+		Network.FireClient("BattleStarted", playerB, startPayloadB)
+	end
+
+	return true, battleId
+end
+
+function CombatService:StartPracticeBattle(player: Player): (boolean, string?)
+	return self:CreateBattle(player, nil, true)
+end
+
+function CombatService:SubmitAction(player: Player, request: Types.CombatActionRequest): (boolean, string?)
+	local battleId = playerActiveBattle[player]
+	if not battleId then return false, "You are not in a battle" end
+
+	local battle = activeBattles[battleId]
+	if not battle or battle.State ~= "WaitingForActions" then
+		return false, "Battle is not accepting actions"
+	end
+
+	local combatant = (battle.CombatantA.Player == player) and battle.CombatantA or battle.CombatantB
+	combatant.SubmittedAction = request
+
+	Logger:Info("COMBAT", "Player %s submitted action: %s for battle %s", player.Name, request.Type, battleId)
+
+	-- If Bot is opponent, generate bot action
+	if battle.CombatantB.IsBot and not battle.CombatantB.SubmittedAction then
+		local botActive = battle.CombatantB.Team[battle.CombatantB.ActiveIndex]
+		local botSkill = botActive.SkillsEquipped[math.random(1, #botActive.SkillsEquipped)]
+		battle.CombatantB.SubmittedAction = {
+			Type = "Skill",
+			SkillId = botSkill,
+		}
+	end
+
+	-- If both have submitted, resolve the turn immediately!
+	if battle.CombatantA.SubmittedAction and battle.CombatantB.SubmittedAction then
+		self:_resolveTurn(battle)
+	end
+
+	return true, nil
+end
+
+function CombatService:_resolveTurn(battle: BattleInstance)
+	battle.State = "Resolving"
+	local a = battle.CombatantA
+	local b = battle.CombatantB
+
+	-- Default to first skill if player timed out
+	if not a.SubmittedAction then
+		local activeM = a.Team[a.ActiveIndex]
+		a.SubmittedAction = { Type = "Skill", SkillId = activeM.SkillsEquipped[1] }
+	end
+	if not b.SubmittedAction then
+		local activeM = b.Team[b.ActiveIndex]
+		b.SubmittedAction = { Type = "Skill", SkillId = activeM.SkillsEquipped[1] }
+	end
+
+	local actionsToResolve = {
+		{ Combatant = a, Opponent = b, Action = a.SubmittedAction },
+		{ Combatant = b, Opponent = a, Action = b.SubmittedAction },
+	}
+
+	-- Calculate priority & speed ordering
+	local function getOrderScore(entry: any): number
+		local priority = 0
+		if entry.Action.Type == "Switch" then
+			priority = 10
+		elseif entry.Action.Type == "Skill" and entry.Action.SkillId then
+			local skillDef = AttackDefinitions.Get(entry.Action.SkillId)
+			priority = skillDef and skillDef.Priority or 0
+		end
+
+		local activeMonster = entry.Combatant.Team[entry.Combatant.ActiveIndex]
+		local speed = activeMonster.CalculatedStats.Speed
+		if entry.Combatant.Status.SpeedBoostTurns > 0 then
+			speed = math.floor(speed * 1.3)
+		end
+
+		return (priority * 1000) + speed
+	end
+
+	table.sort(actionsToResolve, function(x, y)
+		local scoreX = getOrderScore(x)
+		local scoreY = getOrderScore(y)
+		if scoreX == scoreY then
+			return math.random() > 0.5
+		end
+		return scoreX > scoreY
+	end)
+
+	local turnActionsReport: { Types.TurnActionResult } = {}
+
+	for _, entry in ipairs(actionsToResolve) do
+		local actor = entry.Combatant
+		local defender = entry.Opponent
+		local action = entry.Action
+		local activeActorMonster = actor.Team[actor.ActiveIndex]
+		local activeDefMonster = defender.Team[defender.ActiveIndex]
+
+		if activeActorMonster.CurrentHealth <= 0 then
+			-- Already knocked out, cannot act
+			continue
+		end
+
+		if actor.Status.StunTurns > 0 then
+			actor.Status.StunTurns -= 1
+			table.insert(turnActionsReport, {
+				ActorUUID = activeActorMonster.UUID,
+				ActionType = "Pass",
+				SkillName = "Stunned!",
+				TargetUUID = activeActorMonster.UUID,
+				DamageDealt = 0,
+				IsCritical = false,
+				ElementMultiplier = 1.0,
+				TargetRemainingHealth = activeActorMonster.CurrentHealth,
+				TargetDefeated = false,
+				StatusApplied = "Stunned",
+			})
+			continue
+		end
+
+		if action.Type == "Skill" and action.SkillId then
+			local skillDef = AttackDefinitions.Get(action.SkillId)
+			if skillDef then
+				-- Accuracy check
+				local rollAcc = math.random(1, 100)
+				if rollAcc <= skillDef.Accuracy then
+					if skillDef.EffectType == "Shield" then
+						actor.Status.ShieldTurns = skillDef.EffectDuration or 1
+						table.insert(turnActionsReport, {
+							ActorUUID = activeActorMonster.UUID,
+							ActionType = "Skill",
+							SkillName = skillDef.DisplayName,
+							TargetUUID = activeActorMonster.UUID,
+							DamageDealt = 0,
+							IsCritical = false,
+							ElementMultiplier = 1.0,
+							TargetRemainingHealth = activeActorMonster.CurrentHealth,
+							TargetDefeated = false,
+							StatusApplied = "Shield",
+						})
+					elseif skillDef.EffectType == "SpeedBoost" then
+						actor.Status.SpeedBoostTurns = skillDef.EffectDuration or 2
+						table.insert(turnActionsReport, {
+							ActorUUID = activeActorMonster.UUID,
+							ActionType = "Skill",
+							SkillName = skillDef.DisplayName,
+							TargetUUID = activeActorMonster.UUID,
+							DamageDealt = 0,
+							IsCritical = false,
+							ElementMultiplier = 1.0,
+							TargetRemainingHealth = activeActorMonster.CurrentHealth,
+							TargetDefeated = false,
+							StatusApplied = "SpeedBoost",
+						})
+					else
+						-- Attack Damage Calculation
+						local actorDef = MonsterDefinitions.Get(activeActorMonster.SpeciesId)
+						local targetDef = MonsterDefinitions.Get(activeDefMonster.SpeciesId)
+
+						local atk = activeActorMonster.CalculatedStats.Attack
+						local def = math.max(1, activeDefMonster.CalculatedStats.Defense)
+
+						local baseDmg = (((2 * activeActorMonster.Level / 5) + 2) * skillDef.Power * (atk / def) / 50) + 2
+
+						-- Elemental effectiveness
+						local primaryElem = (targetDef and targetDef.Elements[1]) or "Fire"
+						local elemMultiplier = ElementDefinitions.GetEffectiveness(skillDef.Element, primaryElem)
+
+						-- Critical hit
+						local isCrit = math.random() <= Config.COMBAT.BASE_CRIT_CHANCE
+						local critMult = isCrit and Config.COMBAT.CRIT_DAMAGE_MULTIPLIER or 1.0
+
+						-- Variance
+						local variance = Config.COMBAT.MIN_DAMAGE_VARIANCE +
+							(math.random() * (Config.COMBAT.MAX_DAMAGE_VARIANCE - Config.COMBAT.MIN_DAMAGE_VARIANCE))
+
+						local finalDamage = math.floor(baseDmg * elemMultiplier * critMult * variance)
+
+						if defender.Status.ShieldTurns > 0 then
+							finalDamage = math.floor(finalDamage * 0.6)
+						end
+
+						finalDamage = math.max(1, finalDamage)
+						activeDefMonster.CurrentHealth = math.clamp(activeDefMonster.CurrentHealth - finalDamage, 0, activeDefMonster.MaxHealth)
+
+						local targetKO = (activeDefMonster.CurrentHealth <= 0)
+						local statusApplied: string? = nil
+
+						if skillDef.EffectType == "Burn" and skillDef.EffectChance and math.random(1, 100) <= skillDef.EffectChance then
+							defender.Status.BurnTurns = skillDef.EffectDuration or 3
+							statusApplied = "Burn"
+						end
+
+						table.insert(turnActionsReport, {
+							ActorUUID = activeActorMonster.UUID,
+							ActionType = "Skill",
+							SkillName = skillDef.DisplayName,
+							TargetUUID = activeDefMonster.UUID,
+							DamageDealt = finalDamage,
+							IsCritical = isCrit,
+							ElementMultiplier = elemMultiplier,
+							TargetRemainingHealth = activeDefMonster.CurrentHealth,
+							TargetDefeated = targetKO,
+							StatusApplied = statusApplied,
+						})
+					end
+				else
+					-- Missed!
+					table.insert(turnActionsReport, {
+						ActorUUID = activeActorMonster.UUID,
+						ActionType = "Skill",
+						SkillName = skillDef.DisplayName .. " (Missed!)",
+						TargetUUID = activeDefMonster.UUID,
+						DamageDealt = 0,
+						IsCritical = false,
+						ElementMultiplier = 1.0,
+						TargetRemainingHealth = activeDefMonster.CurrentHealth,
+						TargetDefeated = false,
+						StatusApplied = nil,
+					})
+				end
+			end
+		end
+	end
+
+	-- Apply end-of-turn status damage (Burn)
+	for _, c in ipairs({ a, b }) do
+		local activeM = c.Team[c.ActiveIndex]
+		if activeM.CurrentHealth > 0 and c.Status.BurnTurns > 0 then
+			c.Status.BurnTurns -= 1
+			local burnDamage = math.max(2, math.floor(activeM.MaxHealth * 0.06))
+			activeM.CurrentHealth = math.clamp(activeM.CurrentHealth - burnDamage, 0, activeM.MaxHealth)
+		end
+		if c.Status.ShieldTurns > 0 then c.Status.ShieldTurns -= 1 end
+		if c.Status.SpeedBoostTurns > 0 then c.Status.SpeedBoostTurns -= 1 end
+	end
+
+	-- Auto-switch knocked out monsters to next alive monster
+	for _, c in ipairs({ a, b }) do
+		local activeM = c.Team[c.ActiveIndex]
+		if activeM.CurrentHealth <= 0 then
+			for idx, m in ipairs(c.Team) do
+				if m.CurrentHealth > 0 then
+					c.ActiveIndex = idx
+					break
+				end
+			end
+		end
+	end
+
+	-- Check Victory / Defeat conditions
+	local aAlive = false
+	for _, m in ipairs(a.Team) do if m.CurrentHealth > 0 then aAlive = true; break end end
+
+	local bAlive = false
+	for _, m in ipairs(b.Team) do if m.CurrentHealth > 0 then bAlive = true; break end end
+
+	local winnerId: number? = nil
+	local battleOver = false
+
+	if not aAlive or not bAlive then
+		battleOver = true
+		if aAlive and not bAlive then
+			winnerId = a.Player and a.Player.UserId or -1
+		elseif bAlive and not aAlive then
+			winnerId = b.Player and b.Player.UserId or -2
+		end
+	end
+
+	local report: Types.TurnReport = {
+		TurnNumber = battle.TurnNumber,
+		Actions = turnActionsReport,
+		ActiveMonsterUUID_PlayerA = a.Team[a.ActiveIndex].UUID,
+		ActiveMonsterUUID_PlayerB = b.Team[b.ActiveIndex].UUID,
+		WinnerPlayerUserId = winnerId,
+	}
+
+	-- Broadcast turn report
+	if a.Player then Network.FireClient("BattleTurnReport", a.Player, report) end
+	if b.Player then Network.FireClient("BattleTurnReport", b.Player, report) end
+
+	if battleOver then
+		self:_finishBattle(battle, winnerId)
+	else
+		-- Prepare next turn
+		battle.TurnNumber += 1
+		battle.State = "WaitingForActions"
+		battle.TurnDeadline = os.time() + Config.COMBAT.TURN_TIMEOUT_SECONDS
+		a.SubmittedAction = nil
+		b.SubmittedAction = nil
+	end
+end
+
+function CombatService:_finishBattle(battle: BattleInstance, winnerUserId: number?)
+	battle.State = "Completed"
+	local a = battle.CombatantA
+	local b = battle.CombatantB
+
+	local isAWinner = (winnerUserId ~= nil and a.Player ~= nil and winnerUserId == a.Player.UserId)
+	local isBWinner = (winnerUserId ~= nil and b.Player ~= nil and winnerUserId == b.Player.UserId)
+
+	-- Distribute rewards
+	if a.Player then
+		local reward = isAWinner and Config.COMBAT.VICTORY_REWARDS or Config.COMBAT.DEFEAT_REWARDS
+		EconomyService:AddCoins(a.Player, reward.Coins, isAWinner and "PvP Battle Victory" or "PvP Battle Consolation")
+		Network.FireClient("BattleEnded", a.Player, {
+			Victory = isAWinner,
+			CoinsGained = reward.Coins,
+			XPGained = reward.XP,
+		})
+		playerActiveBattle[a.Player] = nil
+	end
+
+	if b.Player then
+		local reward = isBWinner and Config.COMBAT.VICTORY_REWARDS or Config.COMBAT.DEFEAT_REWARDS
+		EconomyService:AddCoins(b.Player, reward.Coins, isBWinner and "PvP Battle Victory" or "PvP Battle Consolation")
+		Network.FireClient("BattleEnded", b.Player, {
+			Victory = isBWinner,
+			CoinsGained = reward.Coins,
+			XPGained = reward.XP,
+		})
+		playerActiveBattle[b.Player] = nil
+	end
+
+	activeBattles[battle.Id] = nil
+	Logger:Info("COMBAT", "Battle %s ended. Winner User ID: %s", battle.Id, tostring(winnerUserId))
+end
+
+return CombatService

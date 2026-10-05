@@ -1,0 +1,30 @@
+# Rojo & Build outputs
+*.rbxlx
+*.rbxl
+*.rbxm
+build/
+dist/
+
+# Logs & temporary files
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Luau & Package managers
+.aftman/
+Packages/
+DevPackages/
+_Index/
+.selene/
+
+# IDE / Editor
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+
+# Antigravity CLI / agent artifacts
+.gemini/
+scratch/
+agy.txt

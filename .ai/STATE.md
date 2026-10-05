@@ -41,16 +41,16 @@
 - Ouvrir dans Roblox Studio (Linux) : `./tools/studio.sh`
 
 <!-- CTX:AUTO:START — ne rien écrire à la main sous cette ligne, régénéré par .ai/ctx.sh -->
-### 🔄 Snapshot auto — 2026-10-05 18:26
+### 🔄 Snapshot auto — 2026-10-05 18:29
 
 - **Branche** : `dev` · **fichiers modifiés** : 1
 
 - **5 derniers commits** :
+  - 9a22c5c docs(state): update living context with GitHub repository and development workflow
   - 277b22e docs: add branching strategy and pre-commit quality gate
   - efe064d infra(context): kit de contexte vivant .ai/STATE.md
   - c23af59 feat: add studio.sh launcher script integrating with Vinegar on Linux
   - 42f1aa7 test: add comprehensive unit test suite for economy, combat, breeding, and plots
-  - ac7b11f feat: implement client controllers, HUD, collection, breeding, and battle overlay UI
 
 - **Issues** : (gh indisponible ou non authentifié — `gh auth login`)
 <!-- CTX:AUTO:END -->

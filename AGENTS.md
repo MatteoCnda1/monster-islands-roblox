@@ -1,0 +1,28 @@
+# Directives agents — Monster Islands (Roblox)
+
+Règles de collaboration pour les agents (Claude / Gemini) sur le jeu Roblox **Monster Islands**.
+
+---
+
+## 📍 0. Contexte vivant (lire en premier)
+
+L'état **dynamique** du projet (focus, en cours, décisions) est maintenu dans
+**[`.ai/STATE.md`](.ai/STATE.md)** pour éviter de le re-dériver — et donc de rebrûler des %
+de session — à chaque conversation. Il est importé ici :
+
+@.ai/STATE.md
+
+Convention complète dans [`.ai/README.md`](.ai/README.md). En fin de session, rafraîchir
+l'état : `bash .ai/ctx.sh` (ou la commande `/handoff` sous Claude Code).
+
+---
+
+## 🧱 Stack
+- Jeu **Roblox** en **Luau** (mode strict), code dans `src/`.
+- Build / sync via **Rojo** (`default.project.json`).
+- Tests dans `tests/`, outils dans `tools/`, assets dans `assets/`, docs dans `docs/`.
+- ⚠️ Repo **local** (pas de remote) → pas de PR, fusion locale (`git merge`).
+
+Voir aussi `CONTRIBUTING.md` pour les conventions de contribution existantes.
+
+<!-- Ajoute ici les règles statiques du projet (workflow git, conventions, contraintes). -->

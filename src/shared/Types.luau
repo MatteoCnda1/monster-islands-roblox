@@ -89,11 +89,31 @@ export type PlotConfig = {
 	MaxMonstersCapacity: number,
 }
 
+export type PlacedDecoration = {
+	UUID: string,
+	DecorationId: string,
+	PositionX: number,
+	PositionY: number,
+	PositionZ: number,
+	RotationY: number,
+	PlacedAt: number,
+}
+
+export type DecorationConfig = {
+	Id: string,
+	Name: string,
+	CostCoins: number,
+	Size: Vector3,
+	PrimaryColor: Color3,
+	SecondaryColor: Color3,
+}
+
 export type PlotData = {
 	Id: number,
 	IsUnlocked: boolean,
 	UnlockedAt: number?,
 	PlacedMonsters: { string }, -- List of Monster UUIDs
+	PlacedDecorations: { PlacedDecoration },
 }
 
 export type CurrencyData = {

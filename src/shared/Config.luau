@@ -101,6 +101,51 @@ local Config = {
 		},
 	},
 
+	-- Plot Decoration system
+	PLOT_GRID_SIZE = 4,
+	DECORATIONS = {
+		{
+			Id = "Fence_Wood",
+			Name = "Rustic Wooden Fence",
+			CostCoins = 20,
+			Size = Vector3.new(4, 3, 1),
+			PrimaryColor = Color3.fromRGB(130, 85, 45),
+			SecondaryColor = Color3.fromRGB(90, 60, 30),
+		},
+		{
+			Id = "Lantern_Pillar",
+			Name = "Elemental Glow Lantern",
+			CostCoins = 50,
+			Size = Vector3.new(2, 6, 2),
+			PrimaryColor = Color3.fromRGB(70, 70, 80),
+			SecondaryColor = Color3.fromRGB(255, 220, 100),
+		},
+		{
+			Id = "Elemental_Flower",
+			Name = "Blazing Blossom",
+			CostCoins = 35,
+			Size = Vector3.new(3, 2, 3),
+			PrimaryColor = Color3.fromRGB(240, 80, 50),
+			SecondaryColor = Color3.fromRGB(50, 180, 70),
+		},
+		{
+			Id = "Stone_Bench",
+			Name = "Mossy Stone Bench",
+			CostCoins = 40,
+			Size = Vector3.new(4, 2, 2),
+			PrimaryColor = Color3.fromRGB(140, 145, 140),
+			SecondaryColor = Color3.fromRGB(80, 130, 80),
+		},
+		{
+			Id = "Training_Dummy",
+			Name = "Combat Training Dummy",
+			CostCoins = 100,
+			Size = Vector3.new(3, 5, 3),
+			PrimaryColor = Color3.fromRGB(190, 150, 100),
+			SecondaryColor = Color3.fromRGB(220, 60, 50),
+		},
+	} :: { Types.DecorationConfig },
+
 	-- Logging config
 	LOG_LEVEL = "INFO", -- "DEBUG" | "INFO" | "WARN" | "ERROR"
 }

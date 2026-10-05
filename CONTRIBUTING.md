@@ -87,7 +87,54 @@ Logger:Error("DATA", "Failed to save profile for player %s", player.Name)
 
 ---
 
-## 4. Conventions Git & Workflow
+## 4. Conventions Git & Stratégie de Branches
+
+### Modèle de Branches
+Le projet suit une stratégie stricte à deux branches permanentes :
+- **`main`** : Branche de production / version stable testée. Protégée contre les commits directs. Seules les versions prêtes pour le jeu final y sont fusionnées.
+- **`dev`** : Branche principale de développement et d'intégration. Tout le travail en cours est fusionné ici.
+- **`feature/<nom>`** : Branches éphémères pour les nouvelles fonctionnalités (ex: `feature/pet-evolution`, `feature/breeding-ui`).
+- **`fix/<nom>`** : Branches pour les correctifs de bugs ciblés (ex: `fix/plot-purchase-race-condition`).
+
+### Workflow de Développement
+1. Créez votre branche depuis `dev` :
+   ```bash
+   git checkout dev
+   git pull origin dev
+   git checkout -b feature/mon-systeme
+   ```
+2. Développez et ajoutez les tests unitaires correspondants dans `tests/`.
+3. Validez localement avec le hook qualité ou manuellement :
+   ```bash
+   ./tools/test.sh    # Les tests doivent être à 100% verts
+   ./tools/build.sh   # La place Rojo doit compiler sans avertissement
+   ```
+4. Committez vos modifications (Conventional Commits) :
+   ```bash
+   git commit -m "feat: add elemental resistance calculation"
+   ```
+5. Fusionnez dans `dev` :
+   ```bash
+   git checkout dev
+   git merge --no-ff feature/mon-systeme
+   git push origin dev
+   ```
+
+---
+
+## 5. Rigueur de Développement & Barrières de Qualité
+
+### Hook Pre-Commit Automatique
+Un hook pre-commit est configuré dans `.git/hooks/pre-commit` (script source : `tools/pre-commit.sh`).
+Il bloque automatiquement tout commit si :
+1. Un seul test unitaire échoue (`./tools/test.sh`).
+2. Le projet Rojo ne compile pas (`rojo build`).
+
+Pour activer manuellement ce hook après un clone :
+```bash
+ln -sf ../../tools/pre-commit.sh .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+```
 
 ### Format des Commits (Conventional Commits)
 Chaque commit doit suivre le format standardisé :

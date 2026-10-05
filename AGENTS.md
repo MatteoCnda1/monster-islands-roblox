@@ -21,7 +21,8 @@ l'état : `bash .ai/ctx.sh` (ou la commande `/handoff` sous Claude Code).
 - Jeu **Roblox** en **Luau** (mode strict), code dans `src/`.
 - Build / sync via **Rojo** (`default.project.json`).
 - Tests dans `tests/`, outils dans `tools/`, assets dans `assets/`, docs dans `docs/`.
-- ⚠️ Repo **local** (pas de remote) → pas de PR, fusion locale (`git merge`).
+- Remote **GitHub** : `MatteoCnda1/monster-islands-roblox` (branches `main` et `dev`).
+- Conventions de branches : développement sur `dev` ou `feature/*`, merge vers `main` pour les releases.
 
 Voir aussi `CONTRIBUTING.md` pour les conventions de contribution existantes.
 

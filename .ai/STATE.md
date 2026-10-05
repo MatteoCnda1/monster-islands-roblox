@@ -41,16 +41,24 @@
 - Ouvrir dans Roblox Studio (Linux) : `./tools/studio.sh`
 
 <!-- CTX:AUTO:START — ne rien écrire à la main sous cette ligne, régénéré par .ai/ctx.sh -->
-### 🔄 Snapshot auto — 2026-10-05 18:29
+### 🔄 Snapshot auto — 2026-10-05 18:47
 
-- **Branche** : `dev` · **fichiers modifiés** : 1
+- **Branche** : `dev` · **fichiers modifiés** : 0
 
 - **5 derniers commits** :
+  - f49ae42 docs: update AGENTS.md and living state with GitHub remote and branch workflow
   - 9a22c5c docs(state): update living context with GitHub repository and development workflow
   - 277b22e docs: add branching strategy and pre-commit quality gate
   - efe064d infra(context): kit de contexte vivant .ai/STATE.md
   - c23af59 feat: add studio.sh launcher script integrating with Vinegar on Linux
-  - 42f1aa7 test: add comprehensive unit test suite for economy, combat, breeding, and plots
 
-- **Issues** : (gh indisponible ou non authentifié — `gh auth login`)
+- **Issues ouvertes (8 max)** :
+  - #14 [Live-Ops] Boss mondiaux coopératifs et événements de raid communautaires
+  - #13 [Combat] Mode d'arène PvP temps réel (Action-RPG) avec compétences et cooldowns
+  - #12 [PvP] Système de ligues classées (Ranked), cote Elo/MMR et saisons compétitives
+  - #11 [Exploration] Zone sauvage 3D (Wild Zone) et mécanisme de capture de créatures
+  - #10 [Quêtes] Quêtes quotidiennes avec rotation, défis hebdomadaires et hauts-faits
+  - #9 [Économie] Habitats élémentaires sur les parcelles et production passive de pièces
+  - #8 [Évolution] Paliers d'évolution visuelle et compétences ultimes des créatures
+  - #7 [Progression] Système d'alimentation, expérience (XP) et montée de niveau des monstres
 <!-- CTX:AUTO:END -->

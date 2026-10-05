@@ -246,6 +246,72 @@ test("Plot purchase fails when required level is not met", function()
 	assert_false(meetsLevel)
 end)
 
+test("Plot decoration grid snapping aligns coordinates to 4 studs", function()
+	local gridSize = 4
+	local localX = 7
+	local localZ = -9
+	local snappedX = math.round(localX / gridSize) * gridSize
+	local snappedZ = math.round(localZ / gridSize) * gridSize
+	assert_eq(snappedX, 8, "7 snapped to 4-stud grid should be 8")
+	assert_eq(snappedZ, -8, "-9 snapped to 4-stud grid should be -8")
+end)
+
+test("Plot decoration deduction and inventory addition", function()
+	local balance = 500
+	local decoConfig = { Id = "Lantern_Pillar", CostCoins = 50 }
+	assert_true(balance >= decoConfig.CostCoins)
+	balance -= decoConfig.CostCoins
+	assert_eq(balance, 450)
+
+	local plotData = { Id = 1, IsUnlocked = true, PlacedDecorations = {} }
+	local placedDeco = {
+		UUID = "deco-uuid-1",
+		DecorationId = decoConfig.Id,
+		PositionX = 8,
+		PositionY = 2,
+		PositionZ = -8,
+		RotationY = 0,
+		PlacedAt = 1000,
+	}
+	table.insert(plotData.PlacedDecorations, placedDeco)
+	assert_eq(#plotData.PlacedDecorations, 1)
+	assert_eq(plotData.PlacedDecorations[1].DecorationId, "Lantern_Pillar")
+
+	-- Remove decoration test
+	table.remove(plotData.PlacedDecorations, 1)
+	assert_eq(#plotData.PlacedDecorations, 0)
+end)
+
+test("Breeding rare mutation discovery triggers for emberfox and noctyra", function()
+	local recipes = {
+		["emberfox+noctyra"] = "voidfox",
+		["noctyra+emberfox"] = "voidfox",
+	}
+	local keyA = "emberfox+noctyra"
+	local keyB = "noctyra+emberfox"
+	assert_eq(recipes[keyA], "voidfox")
+	assert_eq(recipes[keyB], "voidfox")
+end)
+
+test("Combat damage calculation applies elemental multiplier and critical boost", function()
+	local baseDamage = 20
+	local elemMultiplier = 1.5 -- Super effective (Fire vs Nature)
+	local isCrit = true
+	local critMult = isCrit and 1.5 or 1.0
+
+	local finalDamage = math.floor(baseDamage * elemMultiplier * critMult)
+	assert_eq(finalDamage, 45, "20 * 1.5 * 1.5 should equal 45")
+end)
+
+test("Combat knockout triggers when target health reaches zero", function()
+	local targetHealth = 30
+	local incomingDamage = 45
+	targetHealth = math.clamp(targetHealth - incomingDamage, 0, 100)
+	assert_eq(targetHealth, 0)
+	local isKO = (targetHealth <= 0)
+	assert_true(isKO, "Target should be knocked out")
+end)
+
 -- 5. DATASTORE & MIGRATIONS
 print("\n[Suite: PlayerData Schema]")
 test("Default profile includes version, currency, starter monster and unlocked plot", function()

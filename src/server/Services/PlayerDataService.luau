@@ -58,6 +58,7 @@ local function createDefaultProfile(): Types.PlayerData
 			IsUnlocked = (plotConfig.Id == 1), -- Plot 1 is unlocked for free by default
 			UnlockedAt = (plotConfig.Id == 1) and os.time() or nil,
 			PlacedMonsters = (plotConfig.Id == 1) and { starterUUID } or {},
+			PlacedDecorations = {},
 		}
 	end
 
@@ -165,6 +166,13 @@ function PlayerDataService:_loadPlayerProfile(player: Player)
 	if not profile then
 		profile = createDefaultProfile()
 		Logger:Info("DATA", "Created initial default profile for player %s (%d)", player.Name, userId)
+	else
+		-- Ensure newer fields exist on existing profiles
+		for _, plotData in pairs(profile.Plots) do
+			if not plotData.PlacedDecorations then
+				plotData.PlacedDecorations = {}
+			end
+		end
 	end
 
 	loadedProfiles[player] = profile :: Types.PlayerData

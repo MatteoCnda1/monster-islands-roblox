@@ -70,6 +70,10 @@ function UIController:Init()
 	Network.OnClientEvent("PlotPurchased", function(data: any)
 		self:ShowNotification(string.format("Unlocked %s!", data.Name), Color3.fromRGB(100, 200, 255))
 	end)
+
+	Network.OnClientEvent("DecorationPlaced", function(data: any)
+		self:ShowNotification("Placed decoration on Plot!", Color3.fromRGB(255, 215, 80))
+	end)
 end
 
 function UIController:Start()
@@ -469,28 +473,32 @@ function UIController:PopulateModal(modalName: string)
 		content.CanvasSize = UDim2.new(0, 0, 0, 300)
 
 	elseif modalName == "Plots" then
+		local totalHeight = 0
 		for _, plotConfig in ipairs(Config.PLOTS) do
 			local pData = profile.Plots[tostring(plotConfig.Id)]
 			local isOwned = pData and pData.IsUnlocked
 
 			local card = Instance.new("Frame")
-			card.Size = UDim2.new(1, -10, 0, 65)
+			local cardHeight = isOwned and 220 or 65
+			card.Size = UDim2.new(1, -10, 0, cardHeight)
 			card.BackgroundColor3 = isOwned and Color3.fromRGB(30, 45, 35) or Color3.fromRGB(40, 40, 50)
 			card.Parent = content
 			createRoundedCorner(card, 10)
+			totalHeight += cardHeight + 10
 
 			local pLabel = Instance.new("TextLabel")
-			pLabel.Size = UDim2.new(0.65, 0, 1, 0)
-			pLabel.Position = UDim2.new(0, 10, 0, 0)
+			pLabel.Size = UDim2.new(1, -20, 0, 35)
+			pLabel.Position = UDim2.new(0, 10, 0, 5)
 			pLabel.BackgroundTransparency = 1
 			pLabel.TextXAlignment = Enum.TextXAlignment.Left
 			pLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-			pLabel.Font = Enum.Font.GothamMedium
+			pLabel.Font = Enum.Font.GothamBold
 			pLabel.TextSize = 14
-			pLabel.Text = string.format("%s\nStatus: %s (Cost: %d Coins)",
+			pLabel.Text = string.format("%s - %s (Monsters: %d/%d)",
 				plotConfig.Name,
-				isOwned and "UNLOCKED" or "LOCKED",
-				plotConfig.CostCoins
+				isOwned and "UNLOCKED" or string.format("LOCKED (Cost: %d Coins)", plotConfig.CostCoins),
+				isOwned and (pData.PlacedMonsters and #pData.PlacedMonsters or 0) or 0,
+				plotConfig.MaxMonstersCapacity
 			)
 			pLabel.Parent = card
 
@@ -499,7 +507,7 @@ function UIController:PopulateModal(modalName: string)
 				buyBtn.Size = UDim2.new(0.3, -10, 0, 36)
 				buyBtn.Position = UDim2.new(0.7, 0, 0.5, -18)
 				buyBtn.BackgroundColor3 = Color3.fromRGB(70, 180, 90)
-				buyBtn.Text = string.format("Buy (%d)", plotConfig.CostCoins)
+				buyBtn.Text = string.format("Unlock (%d)", plotConfig.CostCoins)
 				buyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 				buyBtn.Font = Enum.Font.GothamBold
 				buyBtn.TextSize = 13
@@ -515,9 +523,130 @@ function UIController:PopulateModal(modalName: string)
 						self:ShowNotification(tostring(err), Color3.fromRGB(255, 80, 80))
 					end
 				end)
+			else
+				-- Decoration Catalog bar for this plot
+				local decoHeader = Instance.new("TextLabel")
+				decoHeader.Size = UDim2.new(1, -20, 0, 20)
+				decoHeader.Position = UDim2.new(0, 10, 0, 42)
+				decoHeader.BackgroundTransparency = 1
+				decoHeader.TextXAlignment = Enum.TextXAlignment.Left
+				decoHeader.TextColor3 = Color3.fromRGB(240, 220, 140)
+				decoHeader.Font = Enum.Font.GothamMedium
+				decoHeader.TextSize = 12
+				decoHeader.Text = "🎨 Build & Place Decorations (4-stud grid):"
+				decoHeader.Parent = card
+
+				local decoScroll = Instance.new("ScrollingFrame")
+				decoScroll.Size = UDim2.new(1, -20, 0, 60)
+				decoScroll.Position = UDim2.new(0, 10, 0, 65)
+				decoScroll.BackgroundColor3 = Color3.fromRGB(20, 25, 22)
+				decoScroll.BorderSizePixel = 0
+				decoScroll.CanvasSize = UDim2.new(0, #Config.DECORATIONS * 140, 0, 0)
+				decoScroll.ScrollBarThickness = 4
+				decoScroll.Parent = card
+				createRoundedCorner(decoScroll, 8)
+
+				local dLayout = Instance.new("UIListLayout")
+				dLayout.FillDirection = Enum.FillDirection.Horizontal
+				dLayout.Padding = UDim.new(0, 6)
+				dLayout.Parent = decoScroll
+
+				for _, deco in ipairs(Config.DECORATIONS) do
+					local dBtn = Instance.new("TextButton")
+					dBtn.Size = UDim2.new(0, 130, 1, -8)
+					dBtn.BackgroundColor3 = Color3.fromRGB(50, 80, 60)
+					dBtn.Text = string.format("%s\n🪙 %d", deco.Name, deco.CostCoins)
+					dBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+					dBtn.Font = Enum.Font.GothamMedium
+					dBtn.TextSize = 11
+					dBtn.Parent = decoScroll
+					createRoundedCorner(dBtn, 6)
+
+					dBtn.MouseButton1Click:Connect(function()
+						local randX = math.random(-2, 2) * (Config.PLOT_GRID_SIZE or 4)
+						local randZ = math.random(-2, 2) * (Config.PLOT_GRID_SIZE or 4)
+						local success, res = Network.InvokeServer("PlacePlotDecoration", {
+							PlotId = plotConfig.Id,
+							DecorationId = deco.Id,
+							LocalX = randX,
+							LocalZ = randZ,
+							RotationY = 0,
+						})
+						if success then
+							self:ShowNotification(string.format("Placed %s!", deco.Name), Color3.fromRGB(100, 230, 120))
+							self:PopulateModal("Plots")
+						else
+							self:ShowNotification(tostring(res), Color3.fromRGB(255, 80, 80))
+						end
+					end)
+				end
+
+				-- Placed decorations summary & removal
+				local placedDecos = pData.PlacedDecorations or {}
+				local summaryLabel = Instance.new("TextLabel")
+				summaryLabel.Size = UDim2.new(1, -20, 0, 20)
+				summaryLabel.Position = UDim2.new(0, 10, 0, 130)
+				summaryLabel.BackgroundTransparency = 1
+				summaryLabel.TextXAlignment = Enum.TextXAlignment.Left
+				summaryLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
+				summaryLabel.Font = Enum.Font.GothamMedium
+				summaryLabel.TextSize = 12
+				summaryLabel.Text = string.format("Placed Items (%d):", #placedDecos)
+				summaryLabel.Parent = card
+
+				local placedScroll = Instance.new("ScrollingFrame")
+				placedScroll.Size = UDim2.new(1, -20, 0, 55)
+				placedScroll.Position = UDim2.new(0, 10, 0, 155)
+				placedScroll.BackgroundColor3 = Color3.fromRGB(20, 25, 22)
+				placedScroll.BorderSizePixel = 0
+				placedScroll.CanvasSize = UDim2.new(0, math.max(1, #placedDecos) * 150, 0, 0)
+				placedScroll.ScrollBarThickness = 4
+				placedScroll.Parent = card
+				createRoundedCorner(placedScroll, 8)
+
+				local pLayout = Instance.new("UIListLayout")
+				pLayout.FillDirection = Enum.FillDirection.Horizontal
+				pLayout.Padding = UDim.new(0, 6)
+				pLayout.Parent = placedScroll
+
+				if #placedDecos == 0 then
+					local empty = Instance.new("TextLabel")
+					empty.Size = UDim2.new(1, 0, 1, 0)
+					empty.BackgroundTransparency = 1
+					empty.Text = "No decorations placed yet. Choose one above!"
+					empty.TextColor3 = Color3.fromRGB(140, 140, 140)
+					empty.Font = Enum.Font.Gotham
+					empty.TextSize = 11
+					empty.Parent = placedScroll
+				else
+					for _, placed in ipairs(placedDecos) do
+						local pItemBtn = Instance.new("TextButton")
+						pItemBtn.Size = UDim2.new(0, 140, 1, -8)
+						pItemBtn.BackgroundColor3 = Color3.fromRGB(70, 40, 40)
+						pItemBtn.Text = string.format("%s\n🗑️ Remove", placed.DecorationId)
+						pItemBtn.TextColor3 = Color3.fromRGB(255, 200, 200)
+						pItemBtn.Font = Enum.Font.GothamMedium
+						pItemBtn.TextSize = 11
+						pItemBtn.Parent = placedScroll
+						createRoundedCorner(pItemBtn, 6)
+
+						pItemBtn.MouseButton1Click:Connect(function()
+							local success, err = Network.InvokeServer("RemovePlotDecoration", {
+								PlotId = plotConfig.Id,
+								DecorationUUID = placed.UUID,
+							})
+							if success then
+								self:ShowNotification("Decoration removed", Color3.fromRGB(255, 180, 80))
+								self:PopulateModal("Plots")
+							else
+								self:ShowNotification(tostring(err), Color3.fromRGB(255, 80, 80))
+							end
+						end)
+					end
+				end
 			end
 		end
-		content.CanvasSize = UDim2.new(0, 0, 0, #Config.PLOTS * 75)
+		content.CanvasSize = UDim2.new(0, 0, 0, totalHeight + 40)
 
 	elseif modalName == "Arena" then
 		local desc = Instance.new("TextLabel")

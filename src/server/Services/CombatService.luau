@@ -1,4 +1,5 @@
 --!strict
+local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -49,6 +50,14 @@ type BattleInstance = {
 
 local activeBattles: { [string]: BattleInstance } = {}
 local playerActiveBattle: { [Player]: string } = {}
+-- Players currently being processed by PlayerRemoving: during that event `player.Parent`
+-- is still `Players`, so this set lets `_finishBattle` skip them explicitly.
+local departingPlayers: { [Player]: boolean } = {}
+
+-- True if the player is still connected and can receive rewards / remotes / teleports.
+local function isPlayerPresent(player: Player?): boolean
+	return player ~= nil and player.Parent ~= nil and not departingPlayers[player]
+end
 
 local CombatService = {}
 
@@ -87,6 +96,19 @@ function CombatService:Init()
 end
 
 function CombatService:Start()
+	-- A player leaving mid-battle forfeits it (issue #24)
+	Players.PlayerRemoving:Connect(function(player: Player)
+		departingPlayers[player] = true
+		local ok, err = pcall(function()
+			self:_handlePlayerLeft(player)
+		end)
+		if not ok then
+			Logger:Error("COMBAT", "Failed to clean up battle for leaving player %s: %s", player.Name, tostring(err))
+		end
+		playerActiveBattle[player] = nil
+		departingPlayers[player] = nil
+	end)
+
 	-- Main loop to monitor turn timeouts
 	task.spawn(function()
 		while true do
@@ -589,7 +611,33 @@ function CombatService:_resolveTurn(battle: BattleInstance)
 	end
 end
 
-function CombatService:_finishBattle(battle: BattleInstance, winnerUserId: number?)
+-- Called on PlayerRemoving: the leaving player forfeits any battle they are in.
+-- PvP: the remaining opponent wins with the normal victory reward.
+-- Bot practice: the battle is simply cleaned up (no winner, no reward).
+function CombatService:_handlePlayerLeft(player: Player)
+	local battleId = playerActiveBattle[player]
+	if not battleId then return end
+
+	local battle = activeBattles[battleId]
+	if not battle or battle.State == "Completed" then
+		return
+	end
+
+	local opponent = (battle.CombatantA.Player == player) and battle.CombatantB or battle.CombatantA
+	local opponentPlayer = opponent.Player
+	local winnerUserId: number? = nil
+	if not opponent.IsBot and opponentPlayer and isPlayerPresent(opponentPlayer) then
+		winnerUserId = opponentPlayer.UserId
+	end
+
+	Logger:Info("COMBAT", "Player %s left during battle %s, forfeiting (opponent: %s)", player.Name, battleId, opponent.Name)
+	self:_finishBattle(battle, winnerUserId, true)
+end
+
+function CombatService:_finishBattle(battle: BattleInstance, winnerUserId: number?, byForfeit: boolean?)
+	if battle.State == "Completed" then
+		return -- Already finished (e.g. turn resolution and forfeit racing)
+	end
 	battle.State = "Completed"
 	local a = battle.CombatantA
 	local b = battle.CombatantB
@@ -597,26 +645,32 @@ function CombatService:_finishBattle(battle: BattleInstance, winnerUserId: numbe
 	local isAWinner = (winnerUserId ~= nil and a.Player ~= nil and winnerUserId == a.Player.UserId)
 	local isBWinner = (winnerUserId ~= nil and b.Player ~= nil and winnerUserId == b.Player.UserId)
 
-	-- Distribute rewards
+	-- Distribute rewards (only to players still connected: a leaver gets nothing)
 	if a.Player then
-		local reward = isAWinner and Config.COMBAT.VICTORY_REWARDS or Config.COMBAT.DEFEAT_REWARDS
-		EconomyService:AddCoins(a.Player, reward.Coins, isAWinner and "PvP Battle Victory" or "PvP Battle Consolation")
-		Network.FireClient("BattleEnded", a.Player, {
-			Victory = isAWinner,
-			CoinsGained = reward.Coins,
-			XPGained = reward.XP,
-		})
+		if isPlayerPresent(a.Player) then
+			local reward = isAWinner and Config.COMBAT.VICTORY_REWARDS or Config.COMBAT.DEFEAT_REWARDS
+			EconomyService:AddCoins(a.Player, reward.Coins, isAWinner and "PvP Battle Victory" or "PvP Battle Consolation")
+			Network.FireClient("BattleEnded", a.Player, {
+				Victory = isAWinner,
+				CoinsGained = reward.Coins,
+				XPGained = reward.XP,
+				OpponentLeft = byForfeit == true,
+			})
+		end
 		playerActiveBattle[a.Player] = nil
 	end
 
 	if b.Player then
-		local reward = isBWinner and Config.COMBAT.VICTORY_REWARDS or Config.COMBAT.DEFEAT_REWARDS
-		EconomyService:AddCoins(b.Player, reward.Coins, isBWinner and "PvP Battle Victory" or "PvP Battle Consolation")
-		Network.FireClient("BattleEnded", b.Player, {
-			Victory = isBWinner,
-			CoinsGained = reward.Coins,
-			XPGained = reward.XP,
-		})
+		if isPlayerPresent(b.Player) then
+			local reward = isBWinner and Config.COMBAT.VICTORY_REWARDS or Config.COMBAT.DEFEAT_REWARDS
+			EconomyService:AddCoins(b.Player, reward.Coins, isBWinner and "PvP Battle Victory" or "PvP Battle Consolation")
+			Network.FireClient("BattleEnded", b.Player, {
+				Victory = isBWinner,
+				CoinsGained = reward.Coins,
+				XPGained = reward.XP,
+				OpponentLeft = byForfeit == true,
+			})
+		end
 		playerActiveBattle[b.Player] = nil
 	end
 
@@ -631,17 +685,17 @@ function CombatService:_finishBattle(battle: BattleInstance, winnerUserId: numbe
 
 	-- Teleport players back to village spawn after short fanfare
 	task.delay(3.5, function()
-		if a.Player and a.Player.Character and a.Player.Character:FindFirstChild("HumanoidRootPart") then
+		if a.Player and a.Player.Parent ~= nil and a.Player.Character and a.Player.Character:FindFirstChild("HumanoidRootPart") then
 			local hrp = a.Player.Character:FindFirstChild("HumanoidRootPart") :: BasePart
 			hrp.CFrame = CFrame.new(0, 4, 0)
 		end
-		if b.Player and b.Player.Character and b.Player.Character:FindFirstChild("HumanoidRootPart") then
+		if b.Player and b.Player.Parent ~= nil and b.Player.Character and b.Player.Character:FindFirstChild("HumanoidRootPart") then
 			local hrp = b.Player.Character:FindFirstChild("HumanoidRootPart") :: BasePart
 			hrp.CFrame = CFrame.new(0, 4, 0)
 		end
 	end)
 
-	Logger:Info("COMBAT", "Battle %s ended. Winner User ID: %s", battle.Id, tostring(winnerUserId))
+	Logger:Info("COMBAT", "Battle %s ended%s. Winner User ID: %s", battle.Id, byForfeit and " by forfeit" or "", tostring(winnerUserId))
 end
 
 return CombatService

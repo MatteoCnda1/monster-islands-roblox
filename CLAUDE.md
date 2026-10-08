@@ -11,18 +11,24 @@ En fin de session, mettre à jour l'état avec `/handoff` (ou `bash .ai/ctx.sh` 
 
 | But | Commande |
 |---|---|
-| Tests unitaires (CLI `luau`, hors Roblox) | `./tools/test.sh` (= `luau tests/run_tests.luau`) |
+| Tests unitaires (CLI `luau`, hors Roblox) | `./tools/test.sh` (génère `build/test_sources.luau` puis `luau tests/run_tests.luau`) |
 | Build de la place | `./tools/build.sh [sortie]` → `build/MonsterIslands.rbxl` (`rojo build`) |
 | Sync live vers Studio | `./tools/serve.sh [port]` (défaut 34872) puis Connect dans le plugin Rojo |
 | Ouvrir dans Studio (Linux) | `./tools/studio.sh` (rebuild puis lance Vinegar via flatpak) |
 | Hook pre-commit | `ln -sf ../../tools/pre-commit.sh .git/hooks/pre-commit` — lance `test.sh` + `build.sh`, bloque le commit en cas d'échec |
 
 - **Pas de lancement d'un test isolé** : `tests/run_tests.luau` est un fichier unique avec son propre mini-framework
-  (`test(name, fn)`, `assert_eq`, `assert_true`, `assert_false`). Pour cibler un test, le lancer en entier ou
-  commenter les autres temporairement.
-- **Les tests n'importent pas `src/`** : ils recopient les formules (économie, dégâts, IVs, migration…) avec des
-  mocks minimaux de `Color3`/`Vector3`/`Enum` (issue #19). Modifier une formule dans `src/` ne casse donc pas les
-  tests : penser à mettre à jour la copie dans `run_tests.luau`.
+  (`test(name, fn)`, `assert_eq`, `assert_near`, `assert_true`, `assert_false`, `assert_errors`). Pour cibler un
+  test, le lancer en entier ou commenter les autres temporairement. Toujours passer par `./tools/test.sh`
+  (`luau tests/run_tests.luau` seul échoue si le bundle n'a pas été généré).
+- **Les tests exercent le vrai code de `src/shared`** : la CLI `luau` n'a pas d'`io` et ses globals sont en lecture
+  seule, donc `test.sh` embarque le texte de chaque `src/**/*.luau` dans `build/test_sources.luau`, et le runner
+  exécute les modules partagés via `loadstring` + `setfenv` avec un faux `script` (`script.Parent.X` résolu vers
+  les modules frères) et des mocks minimaux (`Vector3`, `Color3`, `Enum`, `warn`) — détails en tête du fichier.
+  Tous les fichiers de `src/` (serveur/client compris) sont aussi compilés : une erreur de syntaxe fait échouer la suite.
+- **Seuls les modules purs sont testables** (pas de `game:GetService`). Pour tester de la logique de service, l'extraire
+  dans un module pur de `src/shared` utilisé par le service et les tests (cf. `CombatMath`, `BreedingMath`,
+  `PlotMath`, `EconomyMath`).
 - `./tools/analyze.sh` (`luau-analyze`) n'est **pas** un indicateur fiable : sans définitions de types Roblox, il
   remonte ~1300 erreurs « Unknown global » (`game`, `task`, `TweenInfo`…). Seuls tests + build Rojo comptent.
 - Toolchain dans `~/.cargo/bin` : `luau`, `luau-analyze`, `rojo`.
@@ -73,6 +79,9 @@ Il n'existe pas de `src/modules/` versionné (dossier vide, non mappé par Rojo)
 - `Config.luau` : constantes de jeu (parcelles avec position monde/coût/capacité, monnaies de départ, autosave…).
 - `MonsterDefinitions.luau` (espèces + `CalculateStats`), `AttackDefinitions.luau`, `ElementDefinitions.luau`
   (matrice d'efficacité).
+- Formules pures extraites des services (sans effets de bord, aléa injectable) : `CombatMath.luau` (ordre d'action,
+  dégâts, bouclier, brûlure), `BreedingMath.luau` (compatibilité, héritage d'IVs, espèce/mutation), `PlotMath.luau`
+  (grille de décoration), `EconomyMath.luau` (validation des montants).
 - Les modèles 3D (monstres, œufs, décorations) sont **générés procéduralement en code** (ex.
   `MonsterService.buildProceduralMonsterModel`) ; `assets/` ne contient que la structure prévue (`assets/README.md` + `.gitkeep`), non mappée par Rojo.
 

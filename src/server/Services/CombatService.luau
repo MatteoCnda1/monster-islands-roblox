@@ -9,6 +9,7 @@ local Logger = require(ReplicatedStorage.Shared.Utility.Logger)
 local MonsterDefinitions = require(ReplicatedStorage.Shared.MonsterDefinitions)
 local AttackDefinitions = require(ReplicatedStorage.Shared.AttackDefinitions)
 local ElementDefinitions = require(ReplicatedStorage.Shared.ElementDefinitions)
+local CombatMath = require(ReplicatedStorage.Shared.CombatMath)
 local Network = require(ReplicatedStorage.Shared.Utility.Network)
 
 local PlayerDataService: any = nil
@@ -134,7 +135,7 @@ function CombatService:CreateBattle(playerA: Player, playerB: Player?, isBotPrac
 		-- Create a practice AI opponent
 		local botSpecies = { "mossaur", "aquaphin", "zephlyn" }
 		local chosenSpecies = botSpecies[math.random(1, #botSpecies)]
-		local def = MonsterDefinitions.Get(chosenSpecies)!
+		local def = MonsterDefinitions.Get(chosenSpecies) :: Types.MonsterDefinition
 		local calculatedStats, maxHealth = MonsterDefinitions.CalculateStats(chosenSpecies, 1, { Health=8, Attack=8, Defense=8, Speed=8 })
 
 		local botMonster: Types.MonsterInstance = {
@@ -368,12 +369,7 @@ function CombatService:_resolveTurn(battle: BattleInstance)
 		end
 
 		local activeMonster = entry.Combatant.Team[entry.Combatant.ActiveIndex]
-		local speed = activeMonster.CalculatedStats.Speed
-		if entry.Combatant.Status.SpeedBoostTurns > 0 then
-			speed = math.floor(speed * 1.3)
-		end
-
-		return (priority * 1000) + speed
+		return CombatMath.GetActionOrderScore(priority, activeMonster.CalculatedStats.Speed, entry.Combatant.Status.SpeedBoostTurns > 0)
 	end
 
 	table.sort(actionsToResolve, function(x, y)
@@ -455,31 +451,23 @@ function CombatService:_resolveTurn(battle: BattleInstance)
 						local actorDef = MonsterDefinitions.Get(activeActorMonster.SpeciesId)
 						local targetDef = MonsterDefinitions.Get(activeDefMonster.SpeciesId)
 
-						local atk = activeActorMonster.CalculatedStats.Attack
-						local def = math.max(1, activeDefMonster.CalculatedStats.Defense)
-
-						local baseDmg = (((2 * activeActorMonster.Level / 5) + 2) * skillDef.Power * (atk / def) / 50) + 2
+						local baseDmg = CombatMath.ComputeBaseDamage(
+							activeActorMonster.Level,
+							skillDef.Power,
+							activeActorMonster.CalculatedStats.Attack,
+							activeDefMonster.CalculatedStats.Defense
+						)
 
 						-- Elemental effectiveness
 						local primaryElem = (targetDef and targetDef.Elements[1]) or "Fire"
 						local elemMultiplier = ElementDefinitions.GetEffectiveness(skillDef.Element, primaryElem)
 
-						-- Critical hit
-						local isCrit = math.random() <= Config.COMBAT.BASE_CRIT_CHANCE
-						local critMult = isCrit and Config.COMBAT.CRIT_DAMAGE_MULTIPLIER or 1.0
+						-- Critical hit & variance
+						local isCrit = CombatMath.RollIsCritical(math.random)
+						local variance = CombatMath.RollVariance(math.random)
 
-						-- Variance
-						local variance = Config.COMBAT.MIN_DAMAGE_VARIANCE +
-							(math.random() * (Config.COMBAT.MAX_DAMAGE_VARIANCE - Config.COMBAT.MIN_DAMAGE_VARIANCE))
-
-						local finalDamage = math.floor(baseDmg * elemMultiplier * critMult * variance)
-
-						if defender.Status.ShieldTurns > 0 then
-							finalDamage = math.floor(finalDamage * 0.6)
-						end
-
-						finalDamage = math.max(1, finalDamage)
-						activeDefMonster.CurrentHealth = math.clamp(activeDefMonster.CurrentHealth - finalDamage, 0, activeDefMonster.MaxHealth)
+						local finalDamage = CombatMath.ComputeFinalDamage(baseDmg, elemMultiplier, isCrit, variance, defender.Status.ShieldTurns > 0)
+						activeDefMonster.CurrentHealth = CombatMath.ApplyDamage(activeDefMonster.CurrentHealth, finalDamage, activeDefMonster.MaxHealth)
 
 						local targetKO = (activeDefMonster.CurrentHealth <= 0)
 						local statusApplied: string? = nil
@@ -526,8 +514,8 @@ function CombatService:_resolveTurn(battle: BattleInstance)
 		local activeM = c.Team[c.ActiveIndex]
 		if activeM.CurrentHealth > 0 and c.Status.BurnTurns > 0 then
 			c.Status.BurnTurns -= 1
-			local burnDamage = math.max(2, math.floor(activeM.MaxHealth * 0.06))
-			activeM.CurrentHealth = math.clamp(activeM.CurrentHealth - burnDamage, 0, activeM.MaxHealth)
+			local burnDamage = CombatMath.ComputeBurnDamage(activeM.MaxHealth)
+			activeM.CurrentHealth = CombatMath.ApplyDamage(activeM.CurrentHealth, burnDamage, activeM.MaxHealth)
 		end
 		if c.Status.ShieldTurns > 0 then c.Status.ShieldTurns -= 1 end
 		if c.Status.SpeedBoostTurns > 0 then c.Status.SpeedBoostTurns -= 1 end

@@ -97,7 +97,7 @@ Ouvrez ensuite simplement `build/MonsterIslands.rbxl` dans Roblox Studio.
 
 ## 🧪 Tests Unitaires
 
-Pour exécuter les tests unitaires (CLI `luau`, hors Roblox) :
+Les tests (CLI `luau`, hors Roblox) chargent les vrais modules de `src/shared` et vérifient que tout `src/` compile :
 ```bash
 ./tools/test.sh
 ```

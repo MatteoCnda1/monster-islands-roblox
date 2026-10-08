@@ -8,6 +8,7 @@ local Types = require(ReplicatedStorage.Shared.Types)
 local Config = require(ReplicatedStorage.Shared.Config)
 local Logger = require(ReplicatedStorage.Shared.Utility.Logger)
 local Network = require(ReplicatedStorage.Shared.Utility.Network)
+local PlotMath = require(ReplicatedStorage.Shared.PlotMath)
 
 local PlayerDataService: any = nil
 local EconomyService: any = nil
@@ -539,14 +540,8 @@ function PlotService:PlaceDecoration(
 		return false, "Plot is locked"
 	end
 
-	-- Bounds check within plot dimensions
-	local halfX = (plotConfig.Size.X / 2) - 2
-	local halfZ = (plotConfig.Size.Z / 2) - 2
-
-	-- Grid snapping to Config.PLOT_GRID_SIZE
-	local gridSize = Config.PLOT_GRID_SIZE or 4
-	local snappedX = math.clamp(math.round(localX / gridSize) * gridSize, -halfX, halfX)
-	local snappedZ = math.clamp(math.round(localZ / gridSize) * gridSize, -halfZ, halfZ)
+	-- Grid snapping to Config.PLOT_GRID_SIZE, clamped within plot dimensions
+	local snappedX, snappedZ = PlotMath.SnapDecorationPosition(localX, localZ, plotConfig.Size)
 
 	-- Check coins and deduct
 	if decoConfig.CostCoins > 0 then

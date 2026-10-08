@@ -216,6 +216,9 @@ export type TurnActionResult = {
 	TargetRemainingHealth: number,
 	TargetDefeated: boolean,
 	StatusApplied: string?,
+	-- ActionType "Switch" only: ActorUUID = monster leaving, TargetUUID = monster entering,
+	-- SwitchedInMonster = snapshot of the entering monster (so the opponent can display it).
+	SwitchedInMonster: MonsterInstance?,
 }
 
 export type TurnReport = {
@@ -224,6 +227,7 @@ export type TurnReport = {
 	ActiveMonsterUUID_PlayerA: string,
 	ActiveMonsterUUID_PlayerB: string,
 	WinnerPlayerUserId: number?, -- nil if battle continues
+	MonsterHealth: { [string]: number }?, -- UUID -> CurrentHealth of every monster of both teams at end of turn
 }
 
 local Types = {}

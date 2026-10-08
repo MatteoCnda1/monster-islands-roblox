@@ -9,6 +9,7 @@ local Logger = require(ReplicatedStorage.Shared.Utility.Logger)
 local Network = require(ReplicatedStorage.Shared.Utility.Network)
 local AttackDefinitions = require(ReplicatedStorage.Shared.AttackDefinitions)
 local MonsterDefinitions = require(ReplicatedStorage.Shared.MonsterDefinitions)
+local CombatActions = require(ReplicatedStorage.Shared.CombatActions)
 local CameraController = require(script.Parent.CameraController)
 
 local localPlayer = Players.LocalPlayer
@@ -18,8 +19,12 @@ local CombatController = {
 	BattleOverlay = nil :: Frame?,
 	IsActive = false,
 	CurrentBattleId = nil :: string?,
+	YourTeam = {} :: { Types.MonsterInstance },
 	YourActiveMonster = nil :: Types.MonsterInstance?,
 	OpponentActiveMonster = nil :: Types.MonsterInstance?,
+	OpponentName = "Opponent",
+	YourNameLabel = nil :: TextLabel?,
+	OpponentNameLabel = nil :: TextLabel?,
 	LogLabel = nil :: TextLabel?,
 	TimerLabel = nil :: TextLabel?,
 	YourHPBar = nil :: Frame?,
@@ -129,8 +134,10 @@ end
 function CombatController:OnBattleStarted(data: any)
 	self.IsActive = true
 	self.CurrentBattleId = data.BattleId
-	self.YourActiveMonster = data.YourTeam[data.YourActiveIndex or 1]
+	self.YourTeam = data.YourTeam or {}
+	self.YourActiveMonster = self.YourTeam[data.YourActiveIndex or 1]
 	self.OpponentActiveMonster = data.OpponentActiveMonster
+	self.OpponentName = data.OpponentName or "Opponent"
 	self.ArenaCenter = data.ArenaCenter or Vector3.new(0, 4, -120)
 	self.YourMonsterPosition = data.YourMonsterPosition or Vector3.new(-12, 4.2, -120)
 	self.OpponentMonsterPosition = data.OpponentMonsterPosition or Vector3.new(12, 4.2, -120)
@@ -175,6 +182,7 @@ function CombatController:_buildBattleOverlay(data: any)
 	oppName.TextScaled = true
 	oppName.TextXAlignment = Enum.TextXAlignment.Left
 	oppName.Parent = oppPlate
+	self.OpponentNameLabel = oppName
 
 	local oppHPBg = Instance.new("Frame")
 	oppHPBg.Size = UDim2.new(1, -20, 0, 18)
@@ -218,6 +226,7 @@ function CombatController:_buildBattleOverlay(data: any)
 	yourName.TextScaled = true
 	yourName.TextXAlignment = Enum.TextXAlignment.Left
 	yourName.Parent = yourPlate
+	self.YourNameLabel = yourName
 
 	local yourHPBg = Instance.new("Frame")
 	yourHPBg.Size = UDim2.new(1, -20, 0, 18)
@@ -273,7 +282,9 @@ function CombatController:_renderSkillButtons()
 	self.SkillsContainer:ClearAllChildren()
 
 	local skills = self.YourActiveMonster.SkillsEquipped
-	local numButtons = #skills + 1 -- Skills + Pass
+	local activeIndex = table.find(self.YourTeam, self.YourActiveMonster) or 0
+	local canSwitch = CombatActions.CanSwitch(self.YourTeam, activeIndex)
+	local numButtons = #skills + 1 + (canSwitch and 1 or 0) -- Skills + Pass (+ Switch)
 	local btnWidth = 1 / numButtons
 
 	for i, skillId in ipairs(skills) do
@@ -311,9 +322,79 @@ function CombatController:_renderSkillButtons()
 	passBtn.MouseButton1Click:Connect(function()
 		self:SubmitAction("Pass", nil)
 	end)
+
+	-- Switch Button (only when a living benched monster exists)
+	if canSwitch then
+		local switchBtn = Instance.new("TextButton")
+		switchBtn.Name = "SwitchBtn"
+		switchBtn.Size = UDim2.new(btnWidth, -8, 1, -12)
+		switchBtn.Position = UDim2.new((numButtons - 2) * btnWidth, 4, 0, 6)
+		switchBtn.BackgroundColor3 = Color3.fromRGB(200, 140, 40)
+		switchBtn.Text = "🔄 Switch"
+		switchBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		switchBtn.Font = Enum.Font.GothamBold
+		switchBtn.TextSize = 13
+		switchBtn.Parent = self.SkillsContainer
+		createRoundedCorner(switchBtn, 10)
+
+		switchBtn.MouseButton1Click:Connect(function()
+			self:_renderSwitchButtons()
+		end)
+	end
 end
 
-function CombatController:SubmitAction(actionType: Types.CombatActionType, skillId: string?)
+-- Replaces the action bar with one button per living benched monster, plus a Back button.
+function CombatController:_renderSwitchButtons()
+	if not self.SkillsContainer or not self.YourActiveMonster then return end
+	self.SkillsContainer:ClearAllChildren()
+
+	local candidates: { Types.MonsterInstance } = {}
+	for _, m in ipairs(self.YourTeam) do
+		if m ~= self.YourActiveMonster and m.CurrentHealth > 0 then
+			table.insert(candidates, m)
+		end
+	end
+
+	local numButtons = #candidates + 1 -- Candidates + Back
+	local btnWidth = 1 / numButtons
+
+	for i, m in ipairs(candidates) do
+		local def = MonsterDefinitions.Get(m.SpeciesId)
+		local btn = Instance.new("TextButton")
+		btn.Name = "SwitchTo_" .. m.UUID
+		btn.Size = UDim2.new(btnWidth, -8, 1, -12)
+		btn.Position = UDim2.new((i - 1) * btnWidth, 4, 0, 6)
+		btn.BackgroundColor3 = Color3.fromRGB(200, 140, 40)
+		btn.Text = string.format("%s (Lv. %d)\nHP %d / %d", m.Nickname or (def and def.DisplayName) or m.SpeciesId, m.Level, m.CurrentHealth, m.MaxHealth)
+		btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		btn.Font = Enum.Font.GothamBold
+		btn.TextSize = 13
+		btn.Parent = self.SkillsContainer
+		createRoundedCorner(btn, 10)
+
+		btn.MouseButton1Click:Connect(function()
+			self:SubmitAction("Switch", nil, m.UUID)
+		end)
+	end
+
+	local backBtn = Instance.new("TextButton")
+	backBtn.Name = "BackBtn"
+	backBtn.Size = UDim2.new(btnWidth, -8, 1, -12)
+	backBtn.Position = UDim2.new((numButtons - 1) * btnWidth, 4, 0, 6)
+	backBtn.BackgroundColor3 = Color3.fromRGB(120, 120, 130)
+	backBtn.Text = "↩ Back"
+	backBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	backBtn.Font = Enum.Font.GothamBold
+	backBtn.TextSize = 13
+	backBtn.Parent = self.SkillsContainer
+	createRoundedCorner(backBtn, 10)
+
+	backBtn.MouseButton1Click:Connect(function()
+		self:_renderSkillButtons()
+	end)
+end
+
+function CombatController:SubmitAction(actionType: Types.CombatActionType, skillId: string?, switchMonsterUUID: string?)
 	if not self.IsActive then return end
 	if self.LogLabel then
 		self.LogLabel.Text = "Waiting for turn resolution..."
@@ -322,14 +403,90 @@ function CombatController:SubmitAction(actionType: Types.CombatActionType, skill
 		self.SkillsContainer.Visible = false
 	end
 
-	Network.InvokeServer("SubmitBattleAction", {
+	local ok, success, err = pcall(Network.InvokeServer, "SubmitBattleAction", {
 		Type = actionType,
 		SkillId = skillId,
+		SwitchMonsterUUID = switchMonsterUUID,
 	})
+
+	-- Refused by the server: give the controls back so the player can pick another action
+	if self.IsActive and (not ok or success ~= true) then
+		Logger:Warn("COMBAT", "Battle action refused: %s", tostring(if ok then err else success))
+		self:_renderSkillButtons()
+		if self.SkillsContainer then
+			self.SkillsContainer.Visible = true
+		end
+		if self.LogLabel then
+			self.LogLabel.Text = string.format("Action refused: %s", tostring(if ok then err else "network error"))
+		end
+	end
+end
+
+-- Refreshes a status plate (name + HP bar) from the current active monster of that side.
+function CombatController:_refreshPlate(isYours: boolean)
+	local monster = if isYours then self.YourActiveMonster else self.OpponentActiveMonster
+	if not monster then return end
+
+	local nameLabel = if isYours then self.YourNameLabel else self.OpponentNameLabel
+	if nameLabel then
+		if isYours then
+			nameLabel.Text = string.format("%s (Lv. %d)", monster.Nickname or monster.SpeciesId, monster.Level)
+		else
+			nameLabel.Text = string.format("%s (%s)", monster.Nickname or monster.SpeciesId, self.OpponentName)
+		end
+	end
+
+	local ratio = math.clamp(monster.CurrentHealth / math.max(1, monster.MaxHealth), 0, 1)
+	local bar = if isYours then self.YourHPBar else self.OpponentHPBar
+	if bar then
+		TweenService:Create(bar, TweenInfo.new(0.4), { Size = UDim2.new(ratio, 0, 1, 0) }):Play()
+	end
+	local hpText = if isYours then self.YourHPText else self.OpponentHPText
+	if hpText then
+		hpText.Text = string.format("%d / %d", monster.CurrentHealth, monster.MaxHealth)
+	end
+end
+
+-- Applies a "Switch" report entry: the entering monster becomes the active one of its side.
+function CombatController:_applySwitch(action: Types.TurnActionResult)
+	local incomingUUID = action.TargetUUID
+	if not incomingUUID then return end
+
+	local yourIndex = CombatActions.FindMonsterIndex(self.YourTeam, incomingUUID)
+	local isYours = yourIndex ~= nil
+	local incoming: Types.MonsterInstance? = nil
+	if yourIndex then
+		incoming = self.YourTeam[yourIndex]
+		self.YourActiveMonster = incoming
+	elseif action.SwitchedInMonster then
+		incoming = action.SwitchedInMonster
+		self.OpponentActiveMonster = incoming
+	end
+	if not incoming then return end
+	incoming.CurrentHealth = action.TargetRemainingHealth
+
+	local sidePos = if isYours then self.YourMonsterPosition else self.OpponentMonsterPosition
+	if sidePos then
+		CameraController:FocusOnCombatant(sidePos)
+		spawnElementalImpactVFX(sidePos, Color3.fromRGB(255, 255, 255))
+	end
+	if self.LogLabel then
+		self.LogLabel.Text = string.format("%s sent out %s!", isYours and "You" or "Opponent", incoming.Nickname or incoming.SpeciesId)
+	end
+	self:_refreshPlate(isYours)
 end
 
 function CombatController:OnTurnReport(report: Types.TurnReport)
 	for _, action in ipairs(report.Actions) do
+		if action.ActionType == "Switch" then
+			self:_applySwitch(action)
+			task.wait(1.2)
+			if self.ArenaCenter then
+				CameraController:FocusOnBattle(self.ArenaCenter)
+			end
+			continue
+		end
+
 		local isYouActor = (self.YourActiveMonster ~= nil and action.ActorUUID == self.YourActiveMonster.UUID)
 		local actorPos = isYouActor and self.YourMonsterPosition or self.OpponentMonsterPosition
 		local targetPos = isYouActor and self.OpponentMonsterPosition or self.YourMonsterPosition
@@ -395,8 +552,24 @@ function CombatController:OnTurnReport(report: Types.TurnReport)
 		end
 	end
 
+	-- Sync health with the server (covers end-of-turn burn damage and the benched monsters)
+	if report.MonsterHealth then
+		for _, m in ipairs(self.YourTeam) do
+			local hp = report.MonsterHealth[m.UUID]
+			if hp then m.CurrentHealth = hp end
+		end
+		if self.OpponentActiveMonster then
+			local hp = report.MonsterHealth[self.OpponentActiveMonster.UUID]
+			if hp then self.OpponentActiveMonster.CurrentHealth = hp end
+		end
+		self:_refreshPlate(true)
+		self:_refreshPlate(false)
+	end
+
 	-- Re-enable skills container if battle is still ongoing
 	if self.IsActive and not report.WinnerPlayerUserId then
+		-- The active monster may have changed (switch / knock-out): rebuild its skill buttons
+		self:_renderSkillButtons()
 		if self.SkillsContainer then
 			self.SkillsContainer.Visible = true
 		end

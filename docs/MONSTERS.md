@@ -71,7 +71,9 @@ Ce système assure que :
 
 ---
 
-## 3. Les 5 Monstres Prototypes
+## 3. Les 6 Monstres Prototypes
+
+Le registre (`src/shared/MonsterDefinitions.luau`) compte **5 espèces de base** et **1 espèce de mutation** (`Voidfox`), obtenue uniquement par reproduction.
 
 ### 1. Emberfox
 - **ID** : `emberfox`
@@ -122,3 +124,14 @@ Ce système assure que :
 - **BaseStats** : Health 98, Attack 32, Defense 15, Speed 25
 - **Growth** : Health 9.5, Attack 4.8, Defense 2.3, Speed 3.6
 - **Compétences** : `ShadowClaw`, `VoidPulse`
+
+### 6. Voidfox *(espèce de mutation)*
+- **ID** : `voidfox`
+- **Nom** : Voidfox
+- **Rareté** : Legendary
+- **Éléments** : Fire, Shadow
+- **Description** : Une mutation légendaire née du Feu et de l'Ombre. Ses flammes sombres et spectrales consument toute matière.
+- **Obtention** : Uniquement par reproduction `Emberfox` + `Noctyra` (dans un sens ou dans l'autre), avec une probabilité de mutation de `Config.BREEDING.BASE_MUTATION_CHANCE` (8 %). Voir [BREEDING.md](BREEDING.md).
+- **BaseStats** : Health 115, Attack 36, Defense 19, Speed 29
+- **Growth** : Health 11, Attack 5.2, Defense 2.9, Speed 4.0
+- **Compétences** : `FlameBurst`, `VoidPulse`

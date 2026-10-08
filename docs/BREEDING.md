@@ -22,7 +22,7 @@ Parent A (Éléments: E_A)  +  Parent B (Éléments: E_B)
        OUI                                 NON
         |                                   |
 Espèce Mutation Spéciale        Tirage Pondéré :
-(Ex: Fire + Shadow -> Voidfox)  - 45% Héritage Espèce Parent A
+(Emberfox + Noctyra -> Voidfox) - 45% Héritage Espèce Parent A
                                 - 45% Héritage Espèce Parent B
                                 - 10% Hybride Éléments (E_A + E_B)
 ```

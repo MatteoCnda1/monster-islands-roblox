@@ -11,7 +11,7 @@
 ## 🌟 Caractéristiques Clés
 
 - **Territoire & Parcelles** : Débloquez, achetez et aménagez des parcelles sur votre île personnelle. Assignez-y vos créatures pour qu'elles vaquent à leurs occupations.
-- **Collection Originale de Créatures** : 5 monstres prototypes data-driven aux silhouettes et éléments distinctifs (`Emberfox`, `Mossaur`, `Aquaphin`, `Zephlyn`, `Noctyra`).
+- **Collection Originale de Créatures** : 6 monstres prototypes data-driven aux silhouettes et éléments distinctifs : 5 espèces de base (`Emberfox`, `Mossaur`, `Aquaphin`, `Zephlyn`, `Noctyra`) et 1 espèce légendaire obtenue uniquement par mutation de reproduction (`Voidfox`, issu d'`Emberfox` + `Noctyra`).
 - **Génétique & Reproduction (Breeding)** : Combinez deux parents compatibles pour créer de nouvelles espèces, hériter de caractéristiques individuelles (IVs) et découvrir des mutations rares.
 - **Combat Stratégique Tour par Tour** : Matrice élémentaire à 8 éléments, compétences uniques, calculs de dégâts et coups critiques 100% sécurisés côté serveur.
 - **Architecture Server-Authoritative** : Aucune décision sensible (argent, monstres, dégâts, parcelles) n'est confiée au client.
@@ -51,12 +51,15 @@ monster-islands-roblox/
 │   │   ├── MonsterDefinitions.luau
 │   │   ├── AttackDefinitions.luau
 │   │   ├── ElementDefinitions.luau
-│   │   └── Utility/
-│   └── modules/                -- Modules génériques réutilisables
+│   │   └── Utility/            -- Network, Logger, Signal...
 │
-├── tools/                      -- Scripts d'outillage (build, serve, analyze)
+├── assets/                     -- Emplacement prévu des assets 3D/UI (vide : tout est procédural, cf. assets/README.md)
+├── tools/                      -- Scripts d'outillage (test, build, serve, studio, analyze)
 └── tests/                      -- Suites de tests unitaires pour la logique
 ```
+
+> Rojo (`default.project.json`) ne synchronise que `src/shared`, `src/server` et `src/client`.
+> Il n'existe pas de dossier `src/modules/` : les modules génériques réutilisables vont dans `src/shared/Utility/`.
 
 ---
 
@@ -94,10 +97,15 @@ Ouvrez ensuite simplement `build/MonsterIslands.rbxl` dans Roblox Studio.
 
 ## 🧪 Tests Unitaires
 
-Pour exécuter les vérifications statiques et les tests :
+Pour exécuter les tests unitaires (CLI `luau`, hors Roblox) :
 ```bash
-./tools/analyze.sh
+./tools/test.sh
 ```
+
+Les tests et le build Rojo (`./tools/build.sh`) constituent la barrière qualité (hook `tools/pre-commit.sh`).
+
+> `./tools/analyze.sh` (`luau-analyze`) n'est **pas** un indicateur fiable : faute de définitions de types Roblox,
+> il remonte des centaines d'erreurs « Unknown global » (`game`, `task`, `TweenInfo`…). Ne pas s'y fier pour valider un changement.
 
 ---
 

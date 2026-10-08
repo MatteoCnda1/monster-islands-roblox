@@ -11,6 +11,7 @@ local MonsterDefinitions = require(ReplicatedStorage.Shared.MonsterDefinitions)
 local AttackDefinitions = require(ReplicatedStorage.Shared.AttackDefinitions)
 local ElementDefinitions = require(ReplicatedStorage.Shared.ElementDefinitions)
 local CombatMath = require(ReplicatedStorage.Shared.CombatMath)
+local CombatActions = require(ReplicatedStorage.Shared.CombatActions)
 local Network = require(ReplicatedStorage.Shared.Utility.Network)
 local Signal = require(ReplicatedStorage.Shared.Utility.Signal)
 
@@ -93,7 +94,10 @@ function CombatService:Init()
 
 	-- Remotes
 	Network.HandleFunction("SubmitBattleAction", function(player: Player, payload: any)
-		if typeof(payload) ~= "table" then return false, "Invalid payload" end
+		if typeof(payload) ~= "table" then
+			Logger:Warn("SECURITY", "Player %s sent a non-table battle action (%s)", player.Name, typeof(payload))
+			return false, "Invalid payload"
+		end
 		return self:SubmitAction(player, payload)
 	end)
 
@@ -351,19 +355,40 @@ function CombatService:StartPracticeBattle(player: Player): (boolean, string?)
 	return success, result -- Do not forward the blamed player to the client
 end
 
-function CombatService:SubmitAction(player: Player, request: Types.CombatActionRequest): (boolean, string?)
+-- `request` is untrusted client data: it is fully validated (CombatActions.ValidateAction) and only
+-- the sanitized copy is stored.
+function CombatService:SubmitAction(player: Player, request: any): (boolean, string?)
 	local battleId = playerActiveBattle[player]
-	if not battleId then return false, "You are not in a battle" end
+	if not battleId or battleId == "" then return false, "You are not in a battle" end
 
 	local battle = activeBattles[battleId]
 	if not battle or battle.State ~= "WaitingForActions" then
 		return false, "Battle is not accepting actions"
 	end
 
-	local combatant = (battle.CombatantA.Player == player) and battle.CombatantA or battle.CombatantB
-	combatant.SubmittedAction = request
+	local combatant: InternalCombatant
+	if battle.CombatantA.Player == player then
+		combatant = battle.CombatantA
+	elseif battle.CombatantB.Player == player then
+		combatant = battle.CombatantB
+	else
+		Logger:Warn("SECURITY", "Player %s submitted an action for battle %s they are not part of", player.Name, battleId)
+		return false, "You are not part of this battle"
+	end
 
-	Logger:Info("COMBAT", "Player %s submitted action: %s for battle %s", player.Name, request.Type, battleId)
+	if combatant.SubmittedAction then
+		Logger:Warn("COMBAT", "Player %s already submitted an action for turn %d of battle %s", player.Name, battle.TurnNumber, battleId)
+		return false, "Action already submitted this turn"
+	end
+
+	local action, reason = CombatActions.ValidateAction(request, combatant.Team[combatant.ActiveIndex], combatant.Team)
+	if not action then
+		Logger:Warn("SECURITY", "Player %s sent an invalid battle action in battle %s: %s", player.Name, battleId, tostring(reason))
+		return false, reason or "Invalid action"
+	end
+	combatant.SubmittedAction = action
+
+	Logger:Info("COMBAT", "Player %s submitted action: %s for battle %s", player.Name, action.Type, battleId)
 
 	-- If Bot is opponent, generate bot action
 	if battle.CombatantB.IsBot and not battle.CombatantB.SubmittedAction then
@@ -407,7 +432,7 @@ function CombatService:_resolveTurn(battle: BattleInstance)
 	local function getOrderScore(entry: any): number
 		local priority = 0
 		if entry.Action.Type == "Switch" then
-			priority = 10
+			priority = CombatActions.SWITCH_PRIORITY
 		elseif entry.Action.Type == "Skill" and entry.Action.SkillId then
 			local skillDef = AttackDefinitions.Get(entry.Action.SkillId)
 			priority = skillDef and skillDef.Priority or 0
@@ -457,7 +482,13 @@ function CombatService:_resolveTurn(battle: BattleInstance)
 			continue
 		end
 
-		if action.Type == "Skill" and action.SkillId then
+		if action.Type == "Switch" and action.SwitchMonsterUUID then
+			-- Re-checked at resolution time: the target must still be a living benched monster
+			local newIndex = CombatActions.FindSwitchTargetIndex(actor.Team, action.SwitchMonsterUUID, actor.ActiveIndex)
+			if newIndex then
+				table.insert(turnActionsReport, self:_switchActiveMonster(battle, actor, newIndex))
+			end
+		elseif action.Type == "Skill" and action.SkillId then
 			local skillDef = AttackDefinitions.Get(action.SkillId)
 			if skillDef then
 				-- Accuracy check
@@ -566,13 +597,13 @@ function CombatService:_resolveTurn(battle: BattleInstance)
 		if c.Status.SpeedBoostTurns > 0 then c.Status.SpeedBoostTurns -= 1 end
 	end
 
-	-- Auto-switch knocked out monsters to next alive monster
+	-- Auto-switch knocked out monsters to next alive monster (reported as a Switch so clients follow)
 	for _, c in ipairs({ a, b }) do
 		local activeM = c.Team[c.ActiveIndex]
 		if activeM.CurrentHealth <= 0 then
 			for idx, m in ipairs(c.Team) do
 				if m.CurrentHealth > 0 then
-					c.ActiveIndex = idx
+					table.insert(turnActionsReport, self:_switchActiveMonster(battle, c, idx))
 					break
 				end
 			end
@@ -598,12 +629,21 @@ function CombatService:_resolveTurn(battle: BattleInstance)
 		end
 	end
 
+	-- Authoritative health of every monster (end-of-turn burn is not part of the actions)
+	local monsterHealth: { [string]: number } = {}
+	for _, c in ipairs({ a, b }) do
+		for _, m in ipairs(c.Team) do
+			monsterHealth[m.UUID] = m.CurrentHealth
+		end
+	end
+
 	local report: Types.TurnReport = {
 		TurnNumber = battle.TurnNumber,
 		Actions = turnActionsReport,
 		ActiveMonsterUUID_PlayerA = a.Team[a.ActiveIndex].UUID,
 		ActiveMonsterUUID_PlayerB = b.Team[b.ActiveIndex].UUID,
 		WinnerPlayerUserId = winnerId,
+		MonsterHealth = monsterHealth,
 	}
 
 	-- Broadcast turn report
@@ -619,6 +659,63 @@ function CombatService:_resolveTurn(battle: BattleInstance)
 		battle.TurnDeadline = os.time() + Config.COMBAT.TURN_TIMEOUT_SECONDS
 		a.SubmittedAction = nil
 		b.SubmittedAction = nil
+	end
+end
+
+-- Makes `combatant.Team[newIndex]` the active monster, swaps its 3D arena model and returns the
+-- "Switch" entry of the turn report (ActorUUID = monster leaving, TargetUUID = monster entering).
+function CombatService:_switchActiveMonster(battle: BattleInstance, combatant: InternalCombatant, newIndex: number): Types.TurnActionResult
+	local outgoing = combatant.Team[combatant.ActiveIndex]
+	local incoming = combatant.Team[newIndex]
+	combatant.ActiveIndex = newIndex
+
+	local isSideA = (combatant == battle.CombatantA)
+	self:_replaceArenaModel(battle, isSideA, incoming)
+
+	Logger:Info("COMBAT", "%s switched %s -> %s in battle %s", combatant.Name, outgoing.UUID, incoming.UUID, battle.Id)
+
+	return {
+		ActorUUID = outgoing.UUID,
+		ActionType = "Switch",
+		SkillName = nil,
+		TargetUUID = incoming.UUID,
+		DamageDealt = 0,
+		IsCritical = false,
+		ElementMultiplier = 1.0,
+		TargetRemainingHealth = incoming.CurrentHealth,
+		TargetDefeated = false,
+		StatusApplied = nil,
+		SwitchedInMonster = table.clone(incoming),
+	}
+end
+
+-- Replaces one side's 3D monster in the arena, keeping the old model's position and facing.
+function CombatService:_replaceArenaModel(battle: BattleInstance, isSideA: boolean, monster: Types.MonsterInstance)
+	local battle3D = battle3DInstances[battle.Id]
+	if not battle3D then return end
+
+	local oldModel = if isSideA then battle3D.ModelA else battle3D.ModelB
+	local ok, newModelOrErr = pcall(function()
+		return MonsterService:BuildBattleMonsterModel(monster)
+	end)
+	if not ok then
+		Logger:Error("COMBAT", "Failed to build arena model for %s: %s", monster.SpeciesId, tostring(newModelOrErr))
+		return
+	end
+	local newModel = newModelOrErr :: Model
+
+	if oldModel and oldModel.PrimaryPart and newModel.PrimaryPart then
+		newModel:SetPrimaryPartCFrame(oldModel.PrimaryPart.CFrame)
+	end
+	newModel.Parent = battle3D.Folder
+	if oldModel then
+		oldModel:Destroy()
+	end
+
+	if isSideA then
+		battle3D.ModelA = newModel
+	else
+		battle3D.ModelB = newModel
 	end
 end
 

@@ -775,6 +775,108 @@ test("ApplyXP sanitizes corrupted stored state", function()
 	assert_eq(gained, 1)
 end)
 
+-- =====================================================================
+-- 8. BATTLE ACTIONS (issue #28)
+-- =====================================================================
+print("\n[Suite: Battle Actions]")
+local CombatActions = loadShared("CombatActions")
+
+local function makeBattleTeam(): { any }
+	return {
+		{ UUID = "m1", SpeciesId = "emberpup", CurrentHealth = 30, MaxHealth = 30, SkillsEquipped = { "Ember", "QuickStrike" } },
+		{ UUID = "m2", SpeciesId = "aquaphin", CurrentHealth = 12, MaxHealth = 40, SkillsEquipped = { "WaterJet" } },
+		{ UUID = "m3", SpeciesId = "mossaur", CurrentHealth = 0, MaxHealth = 35, SkillsEquipped = { "VineWhip" } },
+	}
+end
+
+test("ValidateAction rejects non-table payloads and unknown types", function()
+	local team = makeBattleTeam()
+	for _, payload in ipairs({ "Skill", 42, true }) do
+		local action, err = CombatActions.ValidateAction(payload, team[1], team)
+		assert_eq(action, nil, tostring(payload))
+		assert_true(type(err) == "string")
+	end
+	assert_eq(CombatActions.ValidateAction(nil, team[1], team), nil, "nil payload")
+	for _, actionType in ipairs({ "Attack", "skill", "", 1 }) do
+		assert_eq(CombatActions.ValidateAction({ Type = actionType }, team[1], team), nil, tostring(actionType))
+	end
+	assert_eq(CombatActions.ValidateAction({}, team[1], team), nil, "missing Type")
+	assert_eq(CombatActions.ValidateAction({ Type = "Pass" }, nil, team), nil, "no active monster")
+end)
+
+test("ValidateAction accepts only skills equipped by the active monster", function()
+	local team = makeBattleTeam()
+	local action = CombatActions.ValidateAction({ Type = "Skill", SkillId = "QuickStrike" }, team[1], team)
+	assert_true(action ~= nil)
+	assert_eq(action.Type, "Skill")
+	assert_eq(action.SkillId, "QuickStrike")
+
+	-- Skill of a benched teammate, unknown skill, wrong types
+	assert_eq(CombatActions.ValidateAction({ Type = "Skill", SkillId = "WaterJet" }, team[1], team), nil, "benched monster's skill")
+	assert_eq(CombatActions.ValidateAction({ Type = "Skill", SkillId = "NotASkill" }, team[1], team), nil, "unknown skill")
+	assert_eq(CombatActions.ValidateAction({ Type = "Skill" }, team[1], team), nil, "missing SkillId")
+	assert_eq(CombatActions.ValidateAction({ Type = "Skill", SkillId = 1 }, team[1], team), nil, "numeric SkillId")
+	assert_eq(CombatActions.ValidateAction({ Type = "Skill", SkillId = { "Ember" } }, team[1], team), nil, "table SkillId")
+end)
+
+test("ValidateAction accepts a switch only to a living benched teammate", function()
+	local team = makeBattleTeam()
+	local action = CombatActions.ValidateAction({ Type = "Switch", SwitchMonsterUUID = "m2" }, team[1], team)
+	assert_true(action ~= nil)
+	assert_eq(action.Type, "Switch")
+	assert_eq(action.SwitchMonsterUUID, "m2")
+
+	assert_eq(CombatActions.ValidateAction({ Type = "Switch", SwitchMonsterUUID = "m1" }, team[1], team), nil, "already active")
+	assert_eq(CombatActions.ValidateAction({ Type = "Switch", SwitchMonsterUUID = "m3" }, team[1], team), nil, "knocked out")
+	assert_eq(CombatActions.ValidateAction({ Type = "Switch", SwitchMonsterUUID = "enemy" }, team[1], team), nil, "not in team")
+	assert_eq(CombatActions.ValidateAction({ Type = "Switch" }, team[1], team), nil, "missing uuid")
+	assert_eq(CombatActions.ValidateAction({ Type = "Switch", SwitchMonsterUUID = 2 }, team[1], team), nil, "numeric uuid")
+end)
+
+test("ValidateAction drops unexpected fields from the sanitized action", function()
+	local team = makeBattleTeam()
+	local skill = CombatActions.ValidateAction({ Type = "Skill", SkillId = "Ember", SwitchMonsterUUID = "m2", Damage = 9999, TargetUUID = "x" }, team[1], team)
+	assert_true(skill ~= nil)
+	assert_eq(skill.SwitchMonsterUUID, nil)
+	assert_eq(skill.Damage, nil)
+	assert_eq(skill.TargetUUID, nil)
+
+	local switch = CombatActions.ValidateAction({ Type = "Switch", SwitchMonsterUUID = "m2", SkillId = "Ember" }, team[1], team)
+	assert_true(switch ~= nil)
+	assert_eq(switch.SkillId, nil)
+
+	local pass = CombatActions.ValidateAction({ Type = "Pass", SkillId = "Ember", SwitchMonsterUUID = "m2" }, team[1], team)
+	assert_true(pass ~= nil)
+	assert_eq(pass.Type, "Pass")
+	assert_eq(pass.SkillId, nil)
+	assert_eq(pass.SwitchMonsterUUID, nil)
+end)
+
+test("Switch target lookup and CanSwitch follow team health", function()
+	local team = makeBattleTeam()
+	assert_eq(CombatActions.FindMonsterIndex(team, "m3"), 3)
+	assert_eq(CombatActions.FindMonsterIndex(team, "nope"), nil)
+	assert_eq(CombatActions.FindSwitchTargetIndex(team, "m2", 1), 2)
+	assert_eq(CombatActions.FindSwitchTargetIndex(team, "m1", 1), nil, "active monster")
+	assert_eq(CombatActions.FindSwitchTargetIndex(team, "m3", 1), nil, "knocked out")
+	assert_true(CombatActions.CanSwitch(team, 1))
+	team[2].CurrentHealth = 0
+	assert_false(CombatActions.CanSwitch(team, 1), "only knocked out teammates left")
+	assert_eq(CombatActions.FindSwitchTargetIndex(team, "m2", 1), nil, "target knocked out before resolution")
+	assert_false(CombatActions.CanSwitch({ team[1] }, 1), "single-monster team (bot)")
+end)
+
+test("A switch outranks the highest skill priority in turn order", function()
+	local maxPriority = 0
+	for _, def in pairs(AttackDefinitions.GetAll()) do
+		maxPriority = math.max(maxPriority, def.Priority)
+	end
+	assert_true(maxPriority > 0, "some skills have priority")
+	local slowSwitch = CombatMath.GetActionOrderScore(CombatActions.SWITCH_PRIORITY, 1, false)
+	local fastSkill = CombatMath.GetActionOrderScore(maxPriority, 999, true)
+	assert_true(slowSwitch > fastSkill)
+end)
+
 print("\n========================================")
 print(string.format(" Test Results: %d Passed, %d Failed (Total: %d)", passedTests, failedTests, totalTests))
 print("========================================")

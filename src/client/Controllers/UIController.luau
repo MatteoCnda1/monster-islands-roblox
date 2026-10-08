@@ -74,6 +74,11 @@ function UIController:Init()
 	Network.OnClientEvent("DecorationPlaced", function(data: any)
 		self:ShowNotification("Placed decoration on Plot!", Color3.fromRGB(255, 215, 80))
 	end)
+
+	Network.OnClientEvent("QuestCompleted", function(quest: Types.QuestDefinition)
+		self:ShowNotification(string.format("📜 Quest Complete: %s!\n+%d 🪙  +%d 💎  +%d XP",
+			quest.Title, quest.RewardCoins, quest.RewardGems, quest.RewardXP), Color3.fromRGB(170, 110, 240))
+	end)
 end
 
 function UIController:Start()
@@ -158,8 +163,8 @@ function UIController:_buildBottomNav()
 
 	local nav = Instance.new("Frame")
 	nav.Name = "BottomNav"
-	nav.Size = UDim2.new(0, 440, 0, 54)
-	nav.Position = UDim2.new(0.5, -220, 1, -70)
+	nav.Size = UDim2.new(0, 550, 0, 54)
+	nav.Position = UDim2.new(0.5, -275, 1, -70)
 	nav.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
 	nav.BackgroundTransparency = 0.2
 	nav.BorderSizePixel = 0
@@ -172,6 +177,7 @@ function UIController:_buildBottomNav()
 		{ Id = "Breeding", Text = "🧬 Breeding", Color = Color3.fromRGB(240, 100, 150) },
 		{ Id = "Plots", Text = "🏝️ Plots", Color = Color3.fromRGB(70, 190, 80) },
 		{ Id = "Arena", Text = "⚔️ PvP Arena", Color = Color3.fromRGB(240, 70, 50) },
+		{ Id = "Quests", Text = "📜 Quests", Color = Color3.fromRGB(150, 90, 220) },
 	}
 
 	local btnWidth = 1 / #buttons
@@ -197,7 +203,7 @@ end
 function UIController:_buildModals()
 	if not self.ScreenGui then return end
 
-	local modalNames = { "Monsters", "Breeding", "Plots", "Arena" }
+	local modalNames = { "Monsters", "Breeding", "Plots", "Arena", "Quests" }
 	for _, mName in ipairs(modalNames) do
 		local modal = Instance.new("Frame")
 		modal.Name = "Modal_" .. mName
@@ -697,6 +703,75 @@ function UIController:PopulateModal(modalName: string)
 				self:ShowNotification(tostring(err), Color3.fromRGB(255, 80, 80))
 			end
 		end)
+
+	elseif modalName == "Quests" then
+		local success, result = Network.InvokeServer("GetActiveQuests")
+		if not success or typeof(result) ~= "table" then
+			local errLabel = Instance.new("TextLabel")
+			errLabel.Size = UDim2.new(1, -10, 0, 40)
+			errLabel.BackgroundTransparency = 1
+			errLabel.Text = "Quests are unavailable right now: " .. tostring(result)
+			errLabel.TextColor3 = Color3.fromRGB(255, 120, 100)
+			errLabel.Font = Enum.Font.GothamMedium
+			errLabel.TextSize = 13
+			errLabel.Parent = content
+			return
+		end
+
+		local quests = result :: { Types.QuestStatus }
+		local completedCount = 0
+		for _, quest in ipairs(quests) do
+			if quest.IsCompleted then completedCount += 1 end
+		end
+
+		local summary = Instance.new("TextLabel")
+		summary.Size = UDim2.new(1, -10, 0, 30)
+		summary.BackgroundTransparency = 1
+		summary.Text = string.format("Progression quests completed: %d/%d", completedCount, #quests)
+		summary.TextColor3 = Color3.fromRGB(220, 200, 255)
+		summary.Font = Enum.Font.GothamBold
+		summary.TextSize = 14
+		summary.TextXAlignment = Enum.TextXAlignment.Left
+		summary.LayoutOrder = 0
+		summary.Parent = content
+
+		for i, quest in ipairs(quests) do
+			local card = Instance.new("Frame")
+			card.Size = UDim2.new(1, -10, 0, 80)
+			card.BackgroundColor3 = quest.IsCompleted and Color3.fromRGB(30, 50, 38) or Color3.fromRGB(38, 32, 52)
+			card.LayoutOrder = i
+			card.Parent = content
+			createRoundedCorner(card, 10)
+			createStroke(card, quest.IsCompleted and Color3.fromRGB(80, 200, 120) or Color3.fromRGB(110, 80, 160), 1)
+
+			local info = Instance.new("TextLabel")
+			info.Size = UDim2.new(0.68, 0, 1, 0)
+			info.Position = UDim2.new(0, 12, 0, 0)
+			info.BackgroundTransparency = 1
+			info.TextXAlignment = Enum.TextXAlignment.Left
+			info.TextWrapped = true
+			info.Font = Enum.Font.GothamMedium
+			info.TextColor3 = Color3.fromRGB(240, 240, 240)
+			info.TextSize = 13
+			info.Text = string.format("%s\n%s\nRewards: %d 🪙 | %d 💎 | %d XP",
+				quest.Title,
+				quest.Description,
+				quest.RewardCoins, quest.RewardGems, quest.RewardXP
+			)
+			info.Parent = card
+
+			local status = Instance.new("TextLabel")
+			status.Size = UDim2.new(0.3, -10, 0, 36)
+			status.Position = UDim2.new(0.7, 0, 0.5, -18)
+			status.BackgroundColor3 = quest.IsCompleted and Color3.fromRGB(50, 160, 90) or Color3.fromRGB(80, 80, 90)
+			status.Text = quest.IsCompleted and "✅ Completed" or "⏳ In Progress"
+			status.TextColor3 = Color3.fromRGB(255, 255, 255)
+			status.Font = Enum.Font.GothamBold
+			status.TextSize = 13
+			status.Parent = card
+			createRoundedCorner(status, 8)
+		end
+		content.CanvasSize = UDim2.new(0, 0, 0, 40 + #quests * 88)
 	end
 end
 

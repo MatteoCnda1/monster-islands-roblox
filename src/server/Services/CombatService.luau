@@ -10,6 +10,7 @@ local MonsterDefinitions = require(ReplicatedStorage.Shared.MonsterDefinitions)
 local AttackDefinitions = require(ReplicatedStorage.Shared.AttackDefinitions)
 local ElementDefinitions = require(ReplicatedStorage.Shared.ElementDefinitions)
 local Network = require(ReplicatedStorage.Shared.Utility.Network)
+local Signal = require(ReplicatedStorage.Shared.Utility.Signal)
 
 local PlayerDataService: any = nil
 local EconomyService: any = nil
@@ -51,6 +52,9 @@ local activeBattles: { [string]: BattleInstance } = {}
 local playerActiveBattle: { [Player]: string } = {}
 
 local CombatService = {}
+
+-- Fired for each human winner of a battle (bot practice included): (player, wasAgainstBot)
+CombatService.BattleWonSignal = Signal.new() :: Signal.Signal<Player, boolean>
 
 local function createFreshStatus(): Types.CombatantStatus
 	return {
@@ -619,6 +623,10 @@ function CombatService:_finishBattle(battle: BattleInstance, winnerUserId: numbe
 		})
 		playerActiveBattle[b.Player] = nil
 	end
+
+	-- Notify listeners (e.g. QuestService) of human victories
+	if isAWinner and a.Player then CombatService.BattleWonSignal:Fire(a.Player, b.IsBot) end
+	if isBWinner and b.Player then CombatService.BattleWonSignal:Fire(b.Player, a.IsBot) end
 
 	activeBattles[battle.Id] = nil
 

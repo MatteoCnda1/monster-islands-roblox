@@ -43,7 +43,7 @@ Game Container (DataModel)
             └── Controllers/
                 ├── UIController.luau       -- Construit toute l'UI en code (HUD, onglets, achats, breeding, décoration)
                 ├── CombatController.luau   -- Interface, dégâts flottants et VFX du combat ; pilote CameraController
-                ├── PlotController.luau     -- Quasi vide : demande au serveur de rafraîchir parcelles et œufs
+                ├── PlotController.luau     -- Invites (côté client, île du joueur local) : achat de parcelles, éclosion des œufs
                 ├── MonsterController.luau  -- Quasi vide : demande au serveur le rendu des monstres placés
                 └── CameraController.luau   -- Caméra cinématique (focus sur une position, arène de combat)
 
@@ -51,9 +51,8 @@ Instances créées au lancement (runtime, côté serveur, répliquées aux clien
 ├── ReplicatedStorage.Remotes/   -- RemoteEvent / RemoteFunction créés à la demande par Network (cf. §4)
 └── Workspace/
     ├── WorldMap/                -- Île, chemins, sanctuaire de breeding, arène PvP (ServerBootstrap)
-    ├── Plots/                   -- Socles des parcelles et décorations (PlotService)
+    ├── Plots/                   -- Une île par joueur (Slot_<n>) : parcelles, décorations, nid et œufs en incubation (PlotService, BreedingService)
     ├── PlacedMonsters/          -- Modèles 3D des monstres placés (MonsterService)
-    ├── BreedingEggs/            -- Œufs en incubation (BreedingService)
     └── ActiveBattleArenas/      -- Monstres des combats en cours, un dossier Battle_<id> par combat (CombatService)
 ```
 

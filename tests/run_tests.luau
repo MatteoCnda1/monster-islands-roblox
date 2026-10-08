@@ -600,6 +600,123 @@ test("Combat config is coherent (chances and rewards)", function()
 	assert_true(Config.BREEDING.BASE_MUTATION_CHANCE > 0 and Config.BREEDING.BASE_MUTATION_CHANCE < 1)
 end)
 
+-- 8. PER-ISLAND BREEDING NEST (issue #29)
+print("\n[Suite: Island Breeding Nest]")
+local PlotSlots = loadShared("PlotSlots")
+local EGG_WIDTH = 3 -- EggShell diameter in BreedingService (Vector3.new(3.0, 4.2, 3.0))
+local NEST_MARGIN = 4 -- Free walking space required around the nest
+
+-- Horizontal (XZ) rectangles: { MinX, MaxX, MinZ, MaxZ }
+local function nestRect()
+	local slotConfig = Config.PLOT_SLOTS
+	local center = slotConfig.NEST_LOCAL_POSITION
+	local halfX = slotConfig.NEST_SIZE.X / 2
+	local halfZ = slotConfig.NEST_SIZE.Z / 2
+	return { center.X - halfX, center.X + halfX, center.Z - halfZ, center.Z + halfZ }
+end
+
+local function rectsOverlap(a: { number }, b: { number }, margin: number): boolean
+	return a[1] - margin < b[2] and b[1] < a[2] + margin and a[3] - margin < b[4] and b[3] < a[4] + margin
+end
+
+local function distanceToRect(x: number, z: number, r: { number }): number
+	local dx = math.max(r[1] - x, 0, x - r[2])
+	local dz = math.max(r[3] - z, 0, z - r[4])
+	return math.sqrt(dx * dx + dz * dz)
+end
+
+test("Nest config is defined and sits on the island top (y = 2)", function()
+	local slotConfig = Config.PLOT_SLOTS
+	assert_true(slotConfig.NEST_LOCAL_POSITION ~= nil and slotConfig.NEST_SIZE ~= nil)
+	assert_eq(slotConfig.NEST_LOCAL_POSITION.Y, slotConfig.ISLAND_SIZE.Y / 2, "nest base must rest on the island top")
+	assert_true(slotConfig.NEST_SIZE.X > 0 and slotConfig.NEST_SIZE.Y > 0 and slotConfig.NEST_SIZE.Z > 0)
+end)
+
+test("Nest stays inside the island with a walking margin", function()
+	local r = nestRect()
+	local halfX = Config.PLOT_SLOTS.ISLAND_SIZE.X / 2
+	local halfZ = Config.PLOT_SLOTS.ISLAND_SIZE.Z / 2
+	assert_true(r[1] >= -halfX + NEST_MARGIN and r[2] <= halfX - NEST_MARGIN, "X out of island")
+	assert_true(r[3] >= -halfZ + NEST_MARGIN and r[4] <= halfZ - NEST_MARGIN, "Z out of island")
+end)
+
+test("Nest does not overlap any plot (corner pillars included)", function()
+	local r = nestRect()
+	for _, plot in ipairs(Config.PLOTS) do
+		-- Corner pillars are 2 studs wide and centered on the plot corners: +1 stud each side
+		local halfX = plot.Size.X / 2 + 1
+		local halfZ = plot.Size.Z / 2 + 1
+		local p = plot.LocalPosition
+		local plotRect = { p.X - halfX, p.X + halfX, p.Z - halfZ, p.Z + halfZ }
+		assert_false(rectsOverlap(r, plotRect, NEST_MARGIN), "nest overlaps plot " .. plot.Id)
+	end
+end)
+
+test("Nest keeps clear of the owner sign and the island spawn point", function()
+	local r = nestRect()
+	local sign = Config.PLOT_SLOTS.OWNER_SIGN_LOCAL_POSITION
+	local spawn = Config.PLOT_SLOTS.SPAWN_LOCAL_POSITION
+	assert_true(distanceToRect(sign.X, sign.Z, r) >= NEST_MARGIN + 1, "too close to the owner sign")
+	assert_true(distanceToRect(spawn.X, spawn.Z, r) >= NEST_MARGIN + 2, "too close to the spawn point")
+end)
+
+test("Nest keeps clear of the bridge landing of every slot", function()
+	local r = nestRect()
+	local halfBridge = Config.PLOT_SLOTS.BRIDGE_WIDTH / 2
+	for slotIndex = 1, PlotSlots.GetSlotCount() do
+		local origin = PlotSlots.GetOrigin(slotIndex)
+		local _, bridgeEnd = PlotSlots.GetBridgeEndpoints(slotIndex)
+		local localX, localZ = bridgeEnd.X - origin.X, bridgeEnd.Z - origin.Z
+		assert_true(distanceToRect(localX, localZ, r) >= halfBridge + NEST_MARGIN,
+			"nest too close to the bridge of slot " .. slotIndex)
+	end
+end)
+
+test("GetNestTopWorldPosition is the slot origin + nest position, raised by the nest height", function()
+	local slotConfig = Config.PLOT_SLOTS
+	for _, slotIndex in ipairs({ 1, 4, PlotSlots.GetSlotCount() }) do
+		local origin = PlotSlots.GetOrigin(slotIndex)
+		local top = PlotSlots.GetNestTopWorldPosition(slotIndex)
+		assert_near(top.X, origin.X + slotConfig.NEST_LOCAL_POSITION.X)
+		assert_near(top.Y, origin.Y + slotConfig.NEST_LOCAL_POSITION.Y + slotConfig.NEST_SIZE.Y)
+		assert_near(top.Z, origin.Z + slotConfig.NEST_LOCAL_POSITION.Z)
+	end
+	-- Two different islands never share a nest
+	local a, b = PlotSlots.GetNestTopWorldPosition(1), PlotSlots.GetNestTopWorldPosition(2)
+	assert_true(math.abs(a.X - b.X) + math.abs(a.Z - b.Z) > slotConfig.NEST_SIZE.X)
+end)
+
+test("Egg offsets: first egg centered, 7 eggs inside the nest without overlapping", function()
+	local first = PlotSlots.GetNestEggOffset(1)
+	assert_near(first.X, 0)
+	assert_near(first.Z, 0)
+	local nestHalf = math.min(Config.PLOT_SLOTS.NEST_SIZE.X, Config.PLOT_SLOTS.NEST_SIZE.Z) / 2
+	local offsets = {}
+	for eggIndex = 1, 7 do
+		local offset = PlotSlots.GetNestEggOffset(eggIndex)
+		assert_eq(offset.Y, 0)
+		local dist = math.sqrt(offset.X * offset.X + offset.Z * offset.Z)
+		assert_true(dist + EGG_WIDTH / 2 <= nestHalf, "egg " .. eggIndex .. " sticks out of the nest")
+		for otherIndex, other in ipairs(offsets) do
+			local dx, dz = offset.X - other.X, offset.Z - other.Z
+			assert_true(math.sqrt(dx * dx + dz * dz) >= EGG_WIDTH - 1e-9,
+				string.format("eggs %d and %d overlap", otherIndex, eggIndex))
+		end
+		table.insert(offsets, offset)
+	end
+end)
+
+test("Egg offsets are deterministic and stay in the nest for many eggs", function()
+	local a, b = PlotSlots.GetNestEggOffset(5), PlotSlots.GetNestEggOffset(5)
+	assert_near(a.X, b.X)
+	assert_near(a.Z, b.Z)
+	local radius = Config.PLOT_SLOTS.NEST_EGG_SPREAD_RADIUS
+	for eggIndex = 8, 20 do
+		local offset = PlotSlots.GetNestEggOffset(eggIndex)
+		assert_near(math.sqrt(offset.X * offset.X + offset.Z * offset.Z), radius)
+	end
+end)
+
 print("\n========================================")
 print(string.format(" Test Results: %d Passed, %d Failed (Total: %d)", passedTests, failedTests, totalTests))
 print("========================================")

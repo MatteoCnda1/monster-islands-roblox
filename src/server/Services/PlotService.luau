@@ -16,9 +16,9 @@ local Signal = require(ReplicatedStorage.Shared.Utility.Signal)
 local PlayerDataService: any = nil
 local EconomyService: any = nil
 local MonsterService: any = nil
+local BreedingService: any = nil
 
 local PROFILE_WAIT_TIMEOUT_SECONDS = 30
-local OWNER_SIGN_LOCAL_POSITION = Vector3.new(-12, 2, 19)
 
 -- One island slot per player (issue #21). Everything built for a player lives in `Folder`
 -- (Workspace.Plots.Slot_<n>) and is destroyed when the slot is released.
@@ -27,6 +27,7 @@ type PlayerSlot = {
 	Owner: Player,
 	Folder: Folder,
 	DecorationsFolder: Folder,
+	NestEggsFolder: Folder, -- Owner's incubating eggs (BreedingService, issue #29)
 	PlotModels: { [number]: Model }, -- Keyed by PlotId
 	DecorationModels: { [string]: Model }, -- Keyed by DecorationUUID
 }
@@ -142,7 +143,7 @@ local function spawnOwnerSign(slotIndex: number, owner: Player, parent: Instance
 	local post = Instance.new("Part")
 	post.Name = "OwnerSign"
 	post.Size = Vector3.new(1.5, 8, 1.5)
-	post.Position = PlotSlots.ToWorldPosition(slotIndex, OWNER_SIGN_LOCAL_POSITION) + Vector3.new(0, 4, 0)
+	post.Position = PlotSlots.ToWorldPosition(slotIndex, Config.PLOT_SLOTS.OWNER_SIGN_LOCAL_POSITION) + Vector3.new(0, 4, 0)
 	post.Anchored = true
 	post.Material = Enum.Material.Wood
 	post.Color = Color3.fromRGB(110, 75, 40)
@@ -166,6 +167,68 @@ local function spawnOwnerSign(slotIndex: number, owner: Player, parent: Instance
 	label.TextScaled = true
 	label.Font = Enum.Font.GothamBold
 	label.Parent = billboard
+end
+
+-- Breeding nest of the island (issue #29): BreedingService lays the owner's eggs in its "Eggs" folder.
+-- The hatch ProximityPrompt is created client-side by PlotController, on the owner's eggs only.
+local function spawnBreedingNest(slotIndex: number, parent: Instance): Folder
+	local slotConfig = Config.PLOT_SLOTS
+	local nestSize = slotConfig.NEST_SIZE
+	local base = PlotSlots.ToWorldPosition(slotIndex, slotConfig.NEST_LOCAL_POSITION)
+
+	local nestModel = Instance.new("Model")
+	nestModel.Name = "BreedingNest"
+
+	local bowl = Instance.new("Part")
+	bowl.Name = "NestBowl"
+	bowl.Shape = Enum.PartType.Cylinder
+	bowl.Size = Vector3.new(nestSize.Y, nestSize.X, nestSize.Z) -- Cylinder axis is X: lay it flat
+	bowl.CFrame = CFrame.new(base + Vector3.new(0, nestSize.Y / 2, 0)) * CFrame.Angles(0, 0, math.rad(90))
+	bowl.Anchored = true
+	bowl.Material = Enum.Material.Fabric
+	bowl.Color = Color3.fromRGB(200, 160, 90)
+	bowl.TopSurface = Enum.SurfaceType.Smooth
+	bowl.Parent = nestModel
+	nestModel.PrimaryPart = bowl
+
+	-- Straw rim: a slightly wider and lower disc, visible as a ring around the bowl
+	local rimHeight = math.max(nestSize.Y - 0.4, 0.4)
+	local rim = Instance.new("Part")
+	rim.Name = "NestRim"
+	rim.Shape = Enum.PartType.Cylinder
+	rim.Size = Vector3.new(rimHeight, nestSize.X + 1.5, nestSize.Z + 1.5)
+	rim.CFrame = CFrame.new(base + Vector3.new(0, rimHeight / 2, 0)) * CFrame.Angles(0, 0, math.rad(90))
+	rim.Anchored = true
+	rim.CanCollide = false
+	rim.Material = Enum.Material.Grass
+	rim.Color = Color3.fromRGB(170, 130, 60)
+	rim.Parent = nestModel
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "NestBillboard"
+	billboard.Size = UDim2.new(0, 160, 0, 36)
+	billboard.StudsOffset = Vector3.new(0, 7.5, 0)
+	billboard.AlwaysOnTop = false
+	billboard.MaxDistance = 60
+	billboard.Parent = bowl
+
+	local label = Instance.new("TextLabel")
+	label.Name = "NestLabel"
+	label.Size = UDim2.new(1, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.Text = "🪺 Breeding Nest"
+	label.TextColor3 = Color3.fromRGB(255, 230, 120)
+	label.TextStrokeTransparency = 0.5
+	label.TextScaled = true
+	label.Font = Enum.Font.GothamBold
+	label.Parent = billboard
+
+	local eggsFolder = Instance.new("Folder")
+	eggsFolder.Name = "Eggs"
+	eggsFolder.Parent = nestModel
+
+	nestModel.Parent = parent
+	return eggsFolder
 end
 
 -- Yields until the player's profile is loaded (DataStore read can be slow) or the player leaves
@@ -200,6 +263,7 @@ function PlotService:Init()
 	PlayerDataService = require(script.Parent.PlayerDataService)
 	EconomyService = require(script.Parent.EconomyService)
 	MonsterService = require(script.Parent.MonsterService)
+	BreedingService = require(script.Parent.BreedingService)
 
 	plotsFolder = createPhysicalPlotsFolder()
 
@@ -301,6 +365,7 @@ function PlotService:AssignSlot(player: Player, teleportOnSpawn: boolean): numbe
 		Owner = player,
 		Folder = folder,
 		DecorationsFolder = decorationsFolder,
+		NestEggsFolder = spawnBreedingNest(slotIndex, folder),
 		PlotModels = {},
 		DecorationModels = {},
 	}
@@ -326,7 +391,7 @@ function PlotService:AssignSlot(player: Player, teleportOnSpawn: boolean): numbe
 		end
 	end
 
-	-- Render the player's plot state, decorations and monsters once their profile is available
+	-- Render the player's plot state, decorations, monsters and eggs once their profile is available
 	task.spawn(function()
 		local profile = waitForProfile(player)
 		if slotsByPlayer[player] ~= slot then return end
@@ -334,6 +399,7 @@ function PlotService:AssignSlot(player: Player, teleportOnSpawn: boolean): numbe
 			self:UpdateClientPlotVisuals(player)
 			self:RenderPlayerDecorations(player)
 			MonsterService:RenderPlacedMonsters(player)
+			BreedingService:RestoreActiveEggs(player)
 		end
 		local payload: Types.PlotSlotAssignment = {
 			SlotIndex = slotIndex,
@@ -346,7 +412,7 @@ function PlotService:AssignSlot(player: Player, teleportOnSpawn: boolean): numbe
 	return slotIndex
 end
 
--- Destroys everything built for the player (plots, owner sign, decorations, placed monsters)
+-- Destroys everything built for the player (plots, owner sign, decorations, nest & eggs, placed monsters)
 -- and frees the slot. Profile data is untouched: it is rebuilt on the next join.
 function PlotService:ReleaseSlot(player: Player)
 	local slot = slotsByPlayer[player]
@@ -356,6 +422,7 @@ function PlotService:ReleaseSlot(player: Player)
 	slotsByIndex[slot.Index] = nil
 
 	MonsterService:UnrenderAllForPlayer(player)
+	BreedingService:DespawnAllEggsForPlayer(player)
 	slot.Folder:Destroy()
 	table.clear(slot.PlotModels)
 	table.clear(slot.DecorationModels)
@@ -373,6 +440,12 @@ end
 function PlotService:GetPlayerSlotIndex(player: Player): number?
 	local slot = slotsByPlayer[player]
 	return slot and slot.Index or nil
+end
+
+-- Folder of the player's island nest where their eggs go, or nil if the player has no island yet
+function PlotService:GetNestEggsFolder(player: Player): Folder?
+	local slot = slotsByPlayer[player]
+	return slot and slot.NestEggsFolder or nil
 end
 
 -- World position of a plot's center on the player's island, or nil if the player has no island

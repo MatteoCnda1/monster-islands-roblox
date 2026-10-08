@@ -106,7 +106,8 @@ local function buildStarterWorld()
 		path.Parent = mapFolder
 	end
 
-	-- 4. Breeding Sanctuary Building (West area)
+	-- 4. Breeding Sanctuary Building (West area). Decorative landmark only: since issue #29 every player
+	-- breeds from the Breeding tab and their eggs incubate in the nest of their own island (PlotService).
 	local breedingSanctuary = Instance.new("Model")
 	breedingSanctuary.Name = "BreedingSanctuary"
 
@@ -141,7 +142,7 @@ local function buildStarterWorld()
 		end
 	end
 
-	-- Nest bowl in the center of breeding sanctuary
+	-- Decorative nest bowl in the center of the sanctuary (no egg is laid here)
 	local nest = Instance.new("Part")
 	nest.Name = "BreedingNest"
 	nest.Size = Vector3.new(8, 2, 8)
@@ -152,7 +153,7 @@ local function buildStarterWorld()
 	nest.Parent = breedingSanctuary
 
 	local bSign = Instance.new("BillboardGui")
-	bSign.Size = UDim2.new(0, 180, 0, 50)
+	bSign.Size = UDim2.new(0, 220, 0, 60)
 	bSign.StudsOffset = Vector3.new(0, 4, 0)
 	bSign.AlwaysOnTop = true
 	bSign.MaxDistance = 80
@@ -161,7 +162,7 @@ local function buildStarterWorld()
 	local bLabel = Instance.new("TextLabel")
 	bLabel.Size = UDim2.new(1, 0, 1, 0)
 	bLabel.BackgroundTransparency = 1
-	bLabel.Text = "Breeding Sanctuary"
+	bLabel.Text = "Breeding Sanctuary\nYour eggs hatch in your island nest"
 	bLabel.TextColor3 = Color3.fromRGB(255, 230, 120)
 	bLabel.TextScaled = true
 	bLabel.Font = Enum.Font.GothamBold

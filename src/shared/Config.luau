@@ -44,6 +44,12 @@ local Config = {
 		BRIDGE_START_RADIUS = 12, -- Bridges start next to the village spawn
 		BRIDGE_WIDTH = 8,
 		SPAWN_LOCAL_POSITION = Vector3.new(0, 5, 19), -- Island plaza, between the plot rows and plot 5
+		OWNER_SIGN_LOCAL_POSITION = Vector3.new(-12, 2, 19), -- Base of the "<name>'s Island" post, on the plaza
+		-- Per-island breeding nest (issue #29): the owner's eggs incubate here. Free east corner, beside
+		-- plot 5 and clear of the plaza and of every bridge landing (checked by the unit tests).
+		NEST_LOCAL_POSITION = Vector3.new(40, 2, 44), -- Center of the nest base, at island top level
+		NEST_SIZE = Vector3.new(12, 1.5, 12),
+		NEST_EGG_SPREAD_RADIUS = 3.5, -- Eggs are laid at most this far from the nest center
 		TELEPORT_ON_FIRST_SPAWN = true,
 	},
 

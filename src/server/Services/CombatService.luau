@@ -134,7 +134,7 @@ function CombatService:CreateBattle(playerA: Player, playerB: Player?, isBotPrac
 		-- Create a practice AI opponent
 		local botSpecies = { "mossaur", "aquaphin", "zephlyn" }
 		local chosenSpecies = botSpecies[math.random(1, #botSpecies)]
-		local def = MonsterDefinitions.Get(chosenSpecies)!
+		local def = MonsterDefinitions.Get(chosenSpecies) :: Types.MonsterDefinition
 		local calculatedStats, maxHealth = MonsterDefinitions.CalculateStats(chosenSpecies, 1, { Health=8, Attack=8, Defense=8, Speed=8 })
 
 		local botMonster: Types.MonsterInstance = {

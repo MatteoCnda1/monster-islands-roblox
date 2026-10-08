@@ -42,8 +42,8 @@ function MatchmakingService:JoinQueue(player: Player): (boolean, string?)
 
 	-- If at least 2 players are waiting, pair the first two!
 	if #waitingQueue >= 2 then
-		local p1 = table.remove(waitingQueue, 1)!
-		local p2 = table.remove(waitingQueue, 1)!
+		local p1 = table.remove(waitingQueue, 1) :: Player
+		local p2 = table.remove(waitingQueue, 1) :: Player
 
 		Network.FireClient("QueueStatusChanged", p1, { InQueue = false, Matched = true })
 		Network.FireClient("QueueStatusChanged", p2, { InQueue = false, Matched = true })

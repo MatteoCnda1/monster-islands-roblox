@@ -98,7 +98,9 @@ Il n'existe pas de `src/modules/` versionné (dossier vide, non mappé par Rojo)
 ### Côté client
 - `UIController` (le plus gros fichier) construit toute l'UI en code et orchestre les onglets ;
   `CombatController` gère le rendu du combat et pilote `CameraController` pour la caméra cinématique.
-  `PlotController` et `MonsterController` sont quasi vides.
+  `PlotController` crée côté client les `ProximityPrompt` réservés au propriétaire (achat de parcelle, éclosion
+  des œufs du nid de l'île), à partir d'attributs posés par le serveur (`OwnerUserId`, `IsUnlocked`, `IsReady`…).
+  `MonsterController` est quasi vide.
 
 ## Conventions (détails dans `CONTRIBUTING.md`)
 - `--!strict` en tête de chaque fichier ; PascalCase pour les membres publics, camelCase pour les locales.

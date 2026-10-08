@@ -4,26 +4,38 @@
 > Partie haute = maintenue à la main (ou via `/handoff`). Partie basse = régénérée par `.ai/ctx.sh`.
 
 ## 🎯 Focus actuel
-- Phase 1 (Vertical Slice) livrée sur `main` (PR #27), `dev` réaligné sur `main` (`2d6f656`).
-- Prochaine étape : validation en jeu sous Roblox Studio, traitement des issues #18–#25, puis Phase 2.
+- Issues #18–#25 corrigées et mergées sur `dev` (poussé, `d811c5c`) — **jamais testées dans Roblox Studio**.
+- Prochaine étape : validation en jeu, puis PR `dev` → `main` (les `Closes #18…#25` fermeront les issues).
 
 ## ✅ Fait récemment
-- **Phase 1 Vertical Slice achevée** :
-  - **Décoration de parcelles (Issue #6)** : Système sur grille (4 studs), catalogue de 5 décorations procédurales (`Fence_Wood`, `Lantern_Pillar`, `Elemental_Flower`, `Stone_Bench`, `Training_Dummy`), déduction monétaire server-authoritative, persistance profil et interface complète d'achat/retrait dans l'onglet Parcelles.
-  - **Incubateur 3D physique & Écloserie (Issue #4)** : Modèle 3D d'œuf dans le nid du sanctuaire, `BillboardGui` avec timer temps réel, pulsation lumineuse, `ProximityPrompt` pour faire éclore avec animation de secousse/fissuration et burst lumineux.
-  - **Combat 3D, VFX et Caméra Dynamique (Issue #5)** : Arène 3D avec téléportation des combattants sur les podiums, modèles 3D des monstres se faisant face, caméra dynamique cinématique, texte flottant de dégâts animés (`BillboardGui` avec tween et critiques) et effets d'impact élémentaires.
-- **Rigueur & Tests** : 22/22 tests unitaires passés (100%), compilation Rojo réussie (`build/MonsterIslands.rbxl`).
-- **Git** : `feature/phase-1-vertical-slice` → `dev` → `main` (PR #27, 2026-10-08). `CLAUDE.md` ajouté (commandes, architecture, pièges : tests découplés de `src/`, `analyze.sh` non fiable).
+- **#19 tests réels** : `./tools/test.sh` embarque `src/` (`build/test_sources.luau`), compile tout `src/` et teste
+  le vrai `src/shared` → 42 tests. Logique extraite : `CombatMath`, `BreedingMath`, `PlotMath`, `EconomyMath`.
+- **Bug critique corrigé** : `CombatService`/`MatchmakingService` utilisaient `x!` (invalide en Luau) → combat et PvP
+  ne se chargeaient pas du tout avant (`rojo build` ne parse pas le Luau).
+- **#20** verrou de session `UpdateAsync` + kick si lecture échoue ; **#21** une île (slot) par joueur (`PlotSlots`,
+  `Config.PLOTS[].LocalPosition`) ; **#24** abandon en combat = victoire adverse.
+- **#18** quêtes via `Signal` + `CompletedQuests` (1 récompense/quête) + onglet Quests ; **#23** file PvP annulable,
+  choix d'équipe, remotes inutiles retirés ; **#22/#25** docs (ARCHITECTURE §3-4, 6 monstres, `assets/README.md`).
+- Nouvelles issues : #28 (compétence non validée), #29 (nid partagé), #30 (XP/niveau jamais appliqués), #31 (file PvP en combat).
 
 ## 🔧 En cours / à faire
-- [ ] Tester les interactions en direct dans Roblox Studio (`./tools/studio.sh` ou `./tools/serve.sh`).
-- [ ] Démarrer la Phase 2 : Habitats élémentaires, production passive d'or et quêtes interactives.
+- [ ] Tester dans Studio (`./tools/studio.sh`) : combat bot + PvP 2 joueurs, déconnexion en combat, quêtes, îles par
+      joueur, file PvP + Cancel, équipe, élevage ; DataStore réel (`STUDIO_MOCK_DATASTORE = false`).
+- [ ] Régler **Max Players ≤ 8** dans Game Settings (8 îles max).
+- [ ] Issues prioritaires : #30 (parcelles 3–5 inachetables faute de montée de niveau), #28 (sécurité combat).
+- [ ] Décider du limiteur de débit réseau (design proposé : token bucket par joueur/remote dans `Network.Handle*`).
+- [ ] Puis Phase 2 : habitats élémentaires, production passive d'or.
 
 ## 🧠 Décisions clés (ne pas re-débattre)
 - **Architecture Server-Authoritative** : Le client ne valide aucun argent, aucun monstre, aucun dégât.
-- **Stratégie Git** : Branche `main` (stable/livrable), branche `dev` (intégration active). Les nouvelles fonctionnalités démarrent sur `feature/<nom>` depuis `dev`.
-- **Barrière qualité automatique** : Tout commit passe obligatoirement les tests unitaires (22 actuellement) et le build Rojo (`.git/hooks/pre-commit`).
-- **Luau strict / modulaire** : Tous les types centralisés dans `src/shared/Types.luau`.
+- **Stratégie Git** : `main` (stable), `dev` (intégration), branches `feature/*` / `fix/*` depuis `dev`, merge `--no-ff`.
+- **Barrière qualité** : hook pre-commit = `./tools/test.sh` (42 tests, syntaxe de tout `src/`) + build Rojo.
+  Le hook ne tourne pas sur un merge sans conflit → relancer `./tools/test.sh` après chaque merge.
+- **Luau strict / modulaire** : types dans `src/shared/Types.luau` ; logique testable dans des modules purs de `src/shared`.
+- **Découplage inter-services** par `Signal` déclaré au niveau module (ex. `CombatService.BattleWonSignal`).
+- **DataStore** : nom fixe `MonsterIslands_PlayerData_v1`, format `{ RecordFormat, Profile, SessionLock }` ;
+  nouveau champ de profil → `createDefaultProfile` + `backfillProfile`. Publier avec « Shut down all servers ».
+- **Parcelles** : une île par joueur (8 slots), invites d'achat créées côté client.
 
 ## 🗺️ Où regarder
 - Code du jeu (Luau) : `src/` (client, server, shared)
@@ -40,24 +52,24 @@
 - Ouvrir dans Roblox Studio (Linux) : `./tools/studio.sh`
 
 <!-- CTX:AUTO:START — ne rien écrire à la main sous cette ligne, régénéré par .ai/ctx.sh -->
-### 🔄 Snapshot auto — 2026-10-08 13:32
+### 🔄 Snapshot auto — 2026-10-08 13:54
 
 - **Branche** : `dev` · **fichiers modifiés** : 1
 
 - **5 derniers commits** :
-  - 2d6f656 Merge pull request #27 from MatteoCnda1/dev
-  - a951a73 docs: add CLAUDE.md with commands and architecture overview
-  - 6c7d14f docs(state): update living context with Phase 1 completion
-  - fd143bc merge: integrate Phase 1 vertical slice into dev
-  - 961c666 feat(phase1): implement 3D hatchery, dynamic combat camera & VFX, and plot decoration system
+  - d811c5c docs: drop references to getters removed in #23
+  - cb75c49 merge: fix/issue-21-per-player-plots into dev (#21)
+  - 777137d merge: fix/issue-23-orphan-remotes into dev (#23)
+  - 78f9ba6 merge: fix/issue-18-quest-completion into dev (#18)
+  - ee368ec merge: fix/issue-20-data-safety into dev (#20)
 
 - **Issues ouvertes (8 max)** :
+  - #31 [PvP] On peut rejoindre la file PvP pendant un combat en cours
+  - #30 [Progression] L'XP de combat n'est jamais ajoutée au profil, et il n'y a pas de montée de niveau
+  - #29 [Multijoueur] Le nid du sanctuaire d'élevage est partagé entre tous les joueurs
+  - #28 [Sécurité] SubmitBattleAction accepte n'importe quelle compétence, et l'action Switch n'est pas implémentée
   - #25 [Nettoyage] Signal.luau inutilisé, dossiers assets vides, roadmap à 5 monstres au lieu de 6
   - #24 [Combat] Un joueur qui quitte en plein combat n'est pas retiré du combat
   - #23 [Réseau] 5 événements serveur sans écouteur et 6 fonctions serveur jamais appelées
   - #22 [Docs] ARCHITECTURE.md décrit un limiteur de débit et une API réseau qui n'existent pas
-  - #21 [Multijoueur] Parcelles partagées : un seul jeu de socles pour tous les joueurs du serveur
-  - #20 [Données] Sauvegarde sans verrou de session, et un échec de GetAsync écrase la vraie sauvegarde
-  - #19 [Tests] run_tests.luau recopie les formules au lieu de tester les modules de src/
-  - #18 [Bug] Les quêtes ne se terminent jamais : CompleteQuest n'est appelé nulle part
 <!-- CTX:AUTO:END -->

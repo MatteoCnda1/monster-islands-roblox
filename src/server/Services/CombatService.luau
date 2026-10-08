@@ -65,6 +65,8 @@ local CombatService = {}
 
 -- Fired for each human winner of a battle (bot practice included): (player, wasAgainstBot)
 CombatService.BattleWonSignal = Signal.new() :: Signal.Signal<Player, boolean>
+-- Fired for each human player once a battle (bot practice or PvP) has started: (player, battleId)
+CombatService.BattleStartedSignal = Signal.new() :: Signal.Signal<Player, string>
 
 local function createFreshStatus(): Types.CombatantStatus
 	return {
@@ -129,12 +131,21 @@ function CombatService:Start()
 	end)
 end
 
-function CombatService:CreateBattle(playerA: Player, playerB: Player?, isBotPractice: boolean): (boolean, string?)
-	local profileA = PlayerDataService:GetProfile(playerA)
-	if not profileA then return false, "No profile for Player A" end
+-- True while the player is in a battle. A battle being set up stores the placeholder "" for
+-- Player B in `playerActiveBattle`: it counts as "in battle" (the slot is already reserved).
+function CombatService:IsInBattle(player: Player): boolean
+	return playerActiveBattle[player] ~= nil
+end
 
-	if playerActiveBattle[playerA] then
-		return false, "Player A is already in an active battle"
+-- On success returns (true, battleId). On failure returns (false, reason, blamedPlayer) where
+-- blamedPlayer is the player who prevented the battle (nil if unknown), so that matchmaking can
+-- put the other one back in the queue (issue #31).
+function CombatService:CreateBattle(playerA: Player, playerB: Player?, isBotPractice: boolean): (boolean, string?, Player?)
+	local profileA = PlayerDataService:GetProfile(playerA)
+	if not profileA then return false, "No profile for Player A", playerA end
+
+	if self:IsInBattle(playerA) then
+		return false, "Player A is already in an active battle", playerA
 	end
 
 	local teamA: { Types.MonsterInstance } = {}
@@ -152,7 +163,7 @@ function CombatService:CreateBattle(playerA: Player, playerB: Player?, isBotPrac
 		end
 	end
 	if #teamA == 0 then
-		return false, "Player A has no monsters"
+		return false, "Player A has no monsters", playerA
 	end
 
 	local combatantB: InternalCombatant
@@ -192,10 +203,10 @@ function CombatService:CreateBattle(playerA: Player, playerB: Player?, isBotPrac
 		}
 	else
 		local profileB = PlayerDataService:GetProfile(playerB)
-		if not profileB then return false, "No profile for Player B" end
+		if not profileB then return false, "No profile for Player B", playerB end
 
-		if playerActiveBattle[playerB] then
-			return false, "Player B is already in an active battle"
+		if self:IsInBattle(playerB) then
+			return false, "Player B is already in an active battle", playerB
 		end
 
 		local teamB: { Types.MonsterInstance } = {}
@@ -212,7 +223,7 @@ function CombatService:CreateBattle(playerA: Player, playerB: Player?, isBotPrac
 			end
 		end
 		if #teamB == 0 then
-			return false, "Player B has no monsters"
+			return false, "Player B has no monsters", playerB
 		end
 
 		combatantB = {
@@ -325,11 +336,19 @@ function CombatService:CreateBattle(playerA: Player, playerB: Player?, isBotPrac
 		Network.FireClient("BattleStarted", playerB, startPayloadB)
 	end
 
+	-- Listeners (MatchmakingService) take the players out of the PvP queue: the server must not
+	-- rely on the client leaving the queue before starting a practice battle (issue #31)
+	CombatService.BattleStartedSignal:Fire(playerA, battleId)
+	if playerB then
+		CombatService.BattleStartedSignal:Fire(playerB, battleId)
+	end
+
 	return true, battleId
 end
 
 function CombatService:StartPracticeBattle(player: Player): (boolean, string?)
-	return self:CreateBattle(player, nil, true)
+	local success, result = self:CreateBattle(player, nil, true)
+	return success, result -- Do not forward the blamed player to the client
 end
 
 function CombatService:SubmitAction(player: Player, request: Types.CombatActionRequest): (boolean, string?)

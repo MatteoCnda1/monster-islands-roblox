@@ -2,7 +2,6 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Logger = require(ReplicatedStorage.Shared.Utility.Logger)
-local Network = require(ReplicatedStorage.Shared.Utility.Network)
 
 local PlayerDataService: any = nil
 
@@ -11,11 +10,8 @@ local InventoryService = {}
 function InventoryService:Init()
 	Logger:Info("INVENTORY", "Initializing InventoryService...")
 	PlayerDataService = require(script.Parent.PlayerDataService)
-
-	Network.HandleFunction("GetInventory", function(player: Player)
-		local profile = PlayerDataService:GetProfile(player)
-		return profile and profile.Inventory or {}
-	end)
+	-- No inventory remotes yet: there is no inventory screen, and profile.Inventory already
+	-- reaches the client through the full profile (GetPlayerData / PlayerDataUpdated).
 end
 
 function InventoryService:Start()
@@ -33,11 +29,6 @@ function InventoryService:AddItem(player: Player, itemId: string, count: number)
 
 	if success then
 		Logger:Info("INVENTORY", "Added %dx %s to %s", cleanCount, itemId, player.Name)
-		Network.FireClient("InventoryChanged", player, {
-			ItemId = itemId,
-			Delta = cleanCount,
-			Total = self:GetItemCount(player, itemId),
-		})
 	end
 	return success
 end
@@ -67,11 +58,6 @@ function InventoryService:RemoveItem(player: Player, itemId: string, count: numb
 
 	if success then
 		Logger:Info("INVENTORY", "Removed %dx %s from %s", cleanCount, itemId, player.Name)
-		Network.FireClient("InventoryChanged", player, {
-			ItemId = itemId,
-			Delta = -cleanCount,
-			Total = self:GetItemCount(player, itemId),
-		})
 	end
 	return success
 end

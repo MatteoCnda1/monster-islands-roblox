@@ -20,6 +20,9 @@ local UIController = {
 	LevelLabel = nil :: TextLabel?,
 	ActiveModal = nil :: Frame?,
 	Modals = {} :: { [string]: Frame },
+	InPvPQueue = false,
+	QueueSessionId = 0,
+	QueueBanner = nil :: Frame?,
 }
 
 local function createRoundedCorner(parent: Instance, radius: number): UICorner
@@ -64,7 +67,21 @@ function UIController:Init()
 	end)
 
 	Network.OnClientEvent("MonsterAcquired", function(newMonster: Types.MonsterInstance)
+		-- Bred monsters (with parents) are announced by "EggHatched" instead, to avoid a double notification
+		if newMonster.Parents then return end
 		self:ShowNotification(string.format("New Monster Acquired: %s!", newMonster.Nickname or newMonster.SpeciesId), Color3.fromRGB(80, 230, 120))
+	end)
+
+	Network.OnClientEvent("BreedingStarted", function(session: Types.BreedingSession)
+		self:ShowNotification(string.format("🧬 Breeding started! Egg ready in %ds", session.DurationSeconds), Color3.fromRGB(240, 120, 200))
+	end)
+
+	Network.OnClientEvent("EggHatched", function(newMonster: Types.MonsterInstance)
+		self:ShowNotification(string.format("🐣 Egg hatched: %s (Gen %d)!", newMonster.Nickname or newMonster.SpeciesId, newMonster.Generation), Color3.fromRGB(80, 230, 120))
+	end)
+
+	Network.OnClientEvent("QueueStatusChanged", function(status: any)
+		self:SetPvPQueueStatus(status)
 	end)
 
 	Network.OnClientEvent("PlotPurchased", function(data: any)
@@ -313,17 +330,52 @@ function UIController:PopulateModal(modalName: string)
 	uiList.Parent = content
 
 	if modalName == "Monsters" then
-		-- List monsters
+		-- Current battle team (only UUIDs still owned by the player, in team order)
+		local currentTeam: { string } = {}
+		for _, teamUUID in ipairs(profile.TeamMonsterUUIDs or {}) do
+			if profile.Monsters[teamUUID] then
+				table.insert(currentTeam, teamUUID)
+			end
+		end
+
+		local teamNames: { string } = {}
+		for _, teamUUID in ipairs(currentTeam) do
+			local tm = profile.Monsters[teamUUID]
+			table.insert(teamNames, tm.Nickname or tm.SpeciesId)
+		end
+
+		local teamHeader = Instance.new("TextLabel")
+		teamHeader.Name = "TeamHeader"
+		teamHeader.LayoutOrder = 0
+		teamHeader.Size = UDim2.new(1, -10, 0, 40)
+		teamHeader.BackgroundColor3 = Color3.fromRGB(45, 40, 25)
+		teamHeader.TextColor3 = Color3.fromRGB(255, 215, 120)
+		teamHeader.Font = Enum.Font.GothamBold
+		teamHeader.TextSize = 13
+		teamHeader.TextWrapped = true
+		teamHeader.Text = string.format("⚔️ Battle Team (%d/%d): %s",
+			#currentTeam, Config.MAX_TEAM_SIZE,
+			#teamNames > 0 and table.concat(teamNames, ", ") or "none")
+		teamHeader.Parent = content
+		createRoundedCorner(teamHeader, 10)
+
+		-- List monsters (team members first, in team order)
 		local count = 0
 		for uuid, monster in pairs(profile.Monsters) do
 			count += 1
 			local def = MonsterDefinitions.Get(monster.SpeciesId)
+			local teamIndex = table.find(currentTeam, uuid)
 			local card = Instance.new("Frame")
+			card.LayoutOrder = teamIndex or (100 + count)
 			card.Size = UDim2.new(1, -10, 0, 75)
 			card.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
 			card.Parent = content
 			createRoundedCorner(card, 10)
-			createStroke(card, Color3.fromRGB(60, 60, 85), 1)
+			if teamIndex then
+				createStroke(card, Color3.fromRGB(255, 200, 80), 2)
+			else
+				createStroke(card, Color3.fromRGB(60, 60, 85), 1)
+			end
 
 			local info = Instance.new("TextLabel")
 			info.Size = UDim2.new(0.65, 0, 1, 0)
@@ -343,10 +395,10 @@ function UIController:PopulateModal(modalName: string)
 			)
 			info.Parent = card
 
-			-- Assign to Plot 1 or Team button
+			-- Assign to Plot 1 button
 			local assignBtn = Instance.new("TextButton")
-			assignBtn.Size = UDim2.new(0.3, -10, 0, 36)
-			assignBtn.Position = UDim2.new(0.7, 0, 0.5, -18)
+			assignBtn.Size = UDim2.new(0.3, -10, 0, 30)
+			assignBtn.Position = UDim2.new(0.7, 0, 0, 5)
 			assignBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 90)
 			assignBtn.Text = monster.AssignedPlotId and "Unassign" or "Place Plot 1"
 			assignBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -364,8 +416,43 @@ function UIController:PopulateModal(modalName: string)
 				task.wait(0.2)
 				self:PopulateModal("Monsters")
 			end)
+
+			-- Battle team toggle (validated server-side by MonsterService:SetTeam)
+			local teamBtn = Instance.new("TextButton")
+			teamBtn.Size = UDim2.new(0.3, -10, 0, 30)
+			teamBtn.Position = UDim2.new(0.7, 0, 1, -35)
+			teamBtn.BackgroundColor3 = teamIndex and Color3.fromRGB(200, 150, 40) or Color3.fromRGB(70, 90, 160)
+			teamBtn.Text = teamIndex and string.format("⚔️ Team #%d ✕", teamIndex) or "+ Add to Team"
+			teamBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+			teamBtn.Font = Enum.Font.GothamBold
+			teamBtn.TextSize = 13
+			teamBtn.Parent = card
+			createRoundedCorner(teamBtn, 8)
+
+			teamBtn.MouseButton1Click:Connect(function()
+				local newTeam = table.clone(currentTeam)
+				if teamIndex then
+					if #newTeam <= 1 then
+						self:ShowNotification("Your team needs at least one monster!", Color3.fromRGB(255, 80, 80))
+						return
+					end
+					table.remove(newTeam, teamIndex)
+				else
+					if #newTeam >= Config.MAX_TEAM_SIZE then
+						self:ShowNotification(string.format("Team is full (max %d). Remove a monster first.", Config.MAX_TEAM_SIZE), Color3.fromRGB(255, 80, 80))
+						return
+					end
+					table.insert(newTeam, uuid)
+				end
+
+				-- On success the server pushes PlayerDataUpdated, which refreshes this modal
+				local success, err = Network.InvokeServer("SetPlayerTeam", newTeam)
+				if not success then
+					self:ShowNotification(tostring(err), Color3.fromRGB(255, 80, 80))
+				end
+			end)
 		end
-		content.CanvasSize = UDim2.new(0, 0, 0, count * 85)
+		content.CanvasSize = UDim2.new(0, 0, 0, 48 + count * 83)
 
 	elseif modalName == "Breeding" then
 		-- Breeding interface
@@ -422,7 +509,7 @@ function UIController:PopulateModal(modalName: string)
 					hatchBtn.MouseButton1Click:Connect(function()
 						local success, err = Network.InvokeServer("ClaimBreedingEgg", sId)
 						if success then
-							self:ShowNotification("Egg Hatched Successfully!", Color3.fromRGB(80, 230, 120))
+							-- Feedback comes from the "EggHatched" server event
 							self:PopulateModal("Breeding")
 						else
 							self:ShowNotification(tostring(err), Color3.fromRGB(255, 80, 80))
@@ -453,7 +540,7 @@ function UIController:PopulateModal(modalName: string)
 					ParentB_UUID = monsterList[2].UUID,
 				})
 				if success then
-					self:ShowNotification("Breeding ritual started!", Color3.fromRGB(240, 120, 200))
+					-- Feedback comes from the "BreedingStarted" server event
 					self:PopulateModal("Breeding")
 				else
 					self:ShowNotification(tostring(err), Color3.fromRGB(255, 80, 80))
@@ -671,6 +758,10 @@ function UIController:PopulateModal(modalName: string)
 
 		botBtn.MouseButton1Click:Connect(function()
 			self:CloseModal("Arena")
+			if self.InPvPQueue then
+				-- Leave the PvP queue first so we cannot get matched mid practice battle
+				Network.InvokeServer("LeavePvPQueue")
+			end
 			local success, err = Network.InvokeServer("StartBotBattle")
 			if not success then
 				self:ShowNotification(tostring(err), Color3.fromRGB(255, 80, 80))
@@ -680,8 +771,8 @@ function UIController:PopulateModal(modalName: string)
 		-- Matchmaking 1v1 PvP
 		local pvpBtn = Instance.new("TextButton")
 		pvpBtn.Size = UDim2.new(1, -10, 0, 50)
-		pvpBtn.BackgroundColor3 = Color3.fromRGB(230, 70, 60)
-		pvpBtn.Text = "⚔️ Find 1v1 PvP Opponent (Queue)"
+		pvpBtn.BackgroundColor3 = self.InPvPQueue and Color3.fromRGB(120, 120, 135) or Color3.fromRGB(230, 70, 60)
+		pvpBtn.Text = self.InPvPQueue and "⏳ Searching... (Click to Cancel)" or "⚔️ Find 1v1 PvP Opponent (Queue)"
 		pvpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 		pvpBtn.Font = Enum.Font.GothamBold
 		pvpBtn.TextSize = 15
@@ -689,9 +780,14 @@ function UIController:PopulateModal(modalName: string)
 		createRoundedCorner(pvpBtn, 10)
 
 		pvpBtn.MouseButton1Click:Connect(function()
+			if self.InPvPQueue then
+				-- The modal is refreshed by SetPvPQueueStatus once the server confirms
+				self:LeavePvPQueue()
+				return
+			end
+			-- The queue banner is shown by the "QueueStatusChanged" server event
 			local success, err = Network.InvokeServer("JoinPvPQueue")
 			if success then
-				self:ShowNotification("Joined PvP Queue. Waiting for opponent...", Color3.fromRGB(255, 200, 80))
 				self:CloseModal("Arena")
 			else
 				self:ShowNotification(tostring(err), Color3.fromRGB(255, 80, 80))
@@ -727,6 +823,100 @@ function UIController:ShowNotification(text: string, color: Color3?)
 		tween.Completed:Wait()
 		notif:Destroy()
 	end)
+end
+
+function UIController:_getOrCreateQueueBanner(): Frame?
+	if self.QueueBanner then return self.QueueBanner end
+	if not self.ScreenGui then return nil end
+
+	local banner = Instance.new("Frame")
+	banner.Name = "PvPQueueBanner"
+	banner.Size = UDim2.new(0, 360, 0, 48)
+	banner.Position = UDim2.new(0.5, -180, 1, -130)
+	banner.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+	banner.BackgroundTransparency = 0.1
+	banner.BorderSizePixel = 0
+	banner.Visible = false
+	banner.Parent = self.ScreenGui
+	createRoundedCorner(banner, 12)
+	createStroke(banner, Color3.fromRGB(240, 70, 50), 1.5)
+
+	local label = Instance.new("TextLabel")
+	label.Name = "Status"
+	label.Size = UDim2.new(1, -120, 1, 0)
+	label.Position = UDim2.new(0, 12, 0, 0)
+	label.BackgroundTransparency = 1
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.TextColor3 = Color3.fromRGB(255, 220, 150)
+	label.Font = Enum.Font.GothamBold
+	label.TextSize = 14
+	label.Text = "⚔️ Searching for an opponent..."
+	label.Parent = banner
+
+	local cancelBtn = Instance.new("TextButton")
+	cancelBtn.Name = "CancelBtn"
+	cancelBtn.Size = UDim2.new(0, 96, 0, 34)
+	cancelBtn.Position = UDim2.new(1, -104, 0.5, -17)
+	cancelBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+	cancelBtn.Text = "Cancel"
+	cancelBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	cancelBtn.Font = Enum.Font.GothamBold
+	cancelBtn.TextSize = 14
+	cancelBtn.Parent = banner
+	createRoundedCorner(cancelBtn, 8)
+	cancelBtn.MouseButton1Click:Connect(function()
+		self:LeavePvPQueue()
+	end)
+
+	self.QueueBanner = banner
+	return banner
+end
+
+function UIController:SetPvPQueueStatus(status: any)
+	if typeof(status) ~= "table" then return end
+	local wasInQueue = self.InPvPQueue
+	self.InPvPQueue = status.InQueue == true
+
+	local banner = self:_getOrCreateQueueBanner()
+	if banner then
+		banner.Visible = self.InPvPQueue
+	end
+
+	if self.InPvPQueue and not wasInQueue and banner then
+		-- Elapsed-time ticker, stops as soon as we leave the queue
+		local label = banner:FindFirstChild("Status") :: TextLabel?
+		local joinedAt = os.clock()
+		self.QueueSessionId += 1
+		local sessionId = self.QueueSessionId
+		task.spawn(function()
+			while self.InPvPQueue and self.QueueSessionId == sessionId and label do
+				label.Text = string.format("⚔️ Searching for an opponent... %ds", math.floor(os.clock() - joinedAt))
+				task.wait(1)
+			end
+		end)
+	elseif not self.InPvPQueue and wasInQueue then
+		if status.Matched then
+			self:ShowNotification("⚔️ Opponent found! Get ready...", Color3.fromRGB(240, 70, 50))
+		else
+			self:ShowNotification("Left the PvP queue", Color3.fromRGB(120, 120, 135))
+		end
+	end
+
+	if typeof(status.Error) == "string" then
+		self:ShowNotification(status.Error, Color3.fromRGB(255, 80, 80))
+	end
+
+	if self.Modals.Arena and self.Modals.Arena.Visible then
+		self:PopulateModal("Arena")
+	end
+end
+
+function UIController:LeavePvPQueue()
+	local left = Network.InvokeServer("LeavePvPQueue")
+	if not left then
+		-- Server says we were not queued (already matched or stale state): resync locally
+		self:SetPvPQueueStatus({ InQueue = false })
+	end
 end
 
 return UIController

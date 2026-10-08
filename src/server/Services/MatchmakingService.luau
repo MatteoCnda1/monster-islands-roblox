@@ -52,6 +52,9 @@ function MatchmakingService:JoinQueue(player: Player): (boolean, string?)
 		local success, err = CombatService:CreateBattle(p1, p2, false)
 		if not success then
 			Logger:Error("PVP", "Failed to start battle for %s and %s: %s", p1.Name, p2.Name, tostring(err))
+			local failure = { InQueue = false, Matched = false, Error = "Match could not start, please queue again" }
+			Network.FireClient("QueueStatusChanged", p1, failure)
+			Network.FireClient("QueueStatusChanged", p2, failure)
 		end
 	end
 

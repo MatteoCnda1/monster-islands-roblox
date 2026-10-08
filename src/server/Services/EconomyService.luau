@@ -19,13 +19,8 @@ end
 function EconomyService:Init()
 	Logger:Info("ECONOMY", "Initializing EconomyService...")
 	PlayerDataService = require(script.Parent.PlayerDataService)
-
-	Network.HandleFunction("GetBalance", function(player: Player)
-		return {
-			Coins = self:GetCoins(player),
-			Gems = self:GetGems(player),
-		}
-	end)
+	-- No "GetBalance" remote: the client reads balances from the full profile
+	-- (GetPlayerData / PlayerDataUpdated) and from "CurrencyChanged".
 end
 
 function EconomyService:Start()

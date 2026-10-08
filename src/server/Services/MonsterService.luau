@@ -203,12 +203,7 @@ function MonsterService:Init()
 	PlayerDataService = require(script.Parent.PlayerDataService)
 	placedMonstersFolder = getPlacedMonstersFolder()
 
-	-- Remotes
-	Network.HandleFunction("GetPlayerMonsters", function(player: Player)
-		local profile = PlayerDataService:GetProfile(player)
-		return profile and profile.Monsters or {}
-	end)
-
+	-- Remotes (monster list reaches the client through the full profile: GetPlayerData / PlayerDataUpdated)
 	Network.HandleFunction("SetPlayerTeam", function(player: Player, teamUUIDs: any)
 		if typeof(teamUUIDs) ~= "table" then return false, "Invalid payload" end
 		return self:SetTeam(player, teamUUIDs)
@@ -283,26 +278,42 @@ function MonsterService:CreateMonster(
 end
 
 function MonsterService:SetTeam(player: Player, teamUUIDs: { string }): (boolean, string?)
-	if #teamUUIDs == 0 then
+	local count = #teamUUIDs
+	if count == 0 then
 		return false, "Team cannot be empty"
 	end
-	if #teamUUIDs > Config.MAX_TEAM_SIZE then
+	if count > Config.MAX_TEAM_SIZE then
 		return false, string.format("Team exceeds maximum size of %d", Config.MAX_TEAM_SIZE)
 	end
 
 	local profile = PlayerDataService:GetProfile(player)
 	if not profile then return false, "No profile" end
 
-	-- Validate ownership of each monster
-	for _, uuid in ipairs(teamUUIDs) do
+	-- Validate type, uniqueness and ownership of each entry, and build a clean server-side copy
+	-- (never store the client-supplied table itself: it may contain extra keys)
+	local cleanTeam: { string } = {}
+	for i = 1, count do
+		local uuid: any = teamUUIDs[i]
+		if typeof(uuid) ~= "string" then
+			Logger:Warn("SECURITY", "Player %s sent a non-string team entry", player.Name)
+			return false, "Invalid team entry"
+		end
+		if table.find(cleanTeam, uuid) then
+			Logger:Warn("SECURITY", "Player %s sent a team with duplicate monster %s", player.Name, uuid)
+			return false, "A monster cannot appear twice in the team"
+		end
 		if not profile.Monsters[uuid] then
 			return false, "Player does not own all designated monsters"
 		end
+		table.insert(cleanTeam, uuid)
 	end
 
-	PlayerDataService:UpdateProfile(player, function(prof)
-		prof.TeamMonsterUUIDs = teamUUIDs
+	local success = PlayerDataService:UpdateProfile(player, function(prof)
+		prof.TeamMonsterUUIDs = cleanTeam
 	end)
+	if not success then
+		return false, "Failed to save team"
+	end
 
 	Logger:Info("MONSTER", "Player %s updated battle team with %d monsters", player.Name, #teamUUIDs)
 	return true, nil

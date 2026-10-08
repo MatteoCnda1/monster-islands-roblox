@@ -9,6 +9,7 @@ local Config = require(ReplicatedStorage.Shared.Config)
 local Logger = require(ReplicatedStorage.Shared.Utility.Logger)
 local Network = require(ReplicatedStorage.Shared.Utility.Network)
 local PlotMath = require(ReplicatedStorage.Shared.PlotMath)
+local Signal = require(ReplicatedStorage.Shared.Utility.Signal)
 
 local PlayerDataService: any = nil
 local EconomyService: any = nil
@@ -19,6 +20,9 @@ local physicalPlotModels: { [number]: Model } = {}
 local physicalDecorationModels: { [string]: Model } = {} -- Keyed by DecorationUUID
 
 local PlotService = {}
+
+-- Fired after a plot purchase has been persisted: (player, plotId)
+PlotService.PlotPurchasedSignal = Signal.new() :: Signal.Signal<Player, number>
 
 local function createPhysicalPlotsFolder(): Folder
 	local folder = Workspace:FindFirstChild("Plots") :: Folder
@@ -259,6 +263,7 @@ function PlotService:PurchasePlot(player: Player, plotId: number): (boolean, str
 	Logger:Info("PLOT", "Player %s successfully purchased plot %d (%s)", player.Name, plotId, plotConfig.Name)
 	self:UpdateClientPlotVisuals(player)
 	Network.FireClient("PlotPurchased", player, { PlotId = plotId, Name = plotConfig.Name })
+	PlotService.PlotPurchasedSignal:Fire(player, plotId)
 
 	return true, nil
 end

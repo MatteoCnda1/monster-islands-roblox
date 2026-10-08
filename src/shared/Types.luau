@@ -126,6 +126,27 @@ export type ProgressionData = {
 	XP: number,
 }
 
+export type QuestDefinition = {
+	Id: string,
+	Title: string,
+	Description: string,
+	RewardCoins: number,
+	RewardGems: number,
+	RewardXP: number,
+}
+
+-- Quest definition enriched with the completion state of a given player (GetActiveQuests payload)
+export type QuestStatus = {
+	Id: string,
+	Title: string,
+	Description: string,
+	RewardCoins: number,
+	RewardGems: number,
+	RewardXP: number,
+	IsCompleted: boolean,
+	CompletedAt: number?,
+}
+
 export type BreedingSession = {
 	Id: string,
 	ParentA_UUID: string,
@@ -148,6 +169,7 @@ export type PlayerData = {
 	Plots: { [string]: PlotData }, -- Keyed by tostring(PlotId)
 	BreedingSessions: { [string]: BreedingSession },
 	Inventory: { [string]: number },
+	CompletedQuests: { [string]: number }, -- QuestId -> os.time() of completion
 	LastSaveTimestamp: number,
 }
 

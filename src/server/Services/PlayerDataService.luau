@@ -137,6 +137,7 @@ local function createDefaultProfile(): Types.PlayerData
 			["Potion_Health_Small"] = 3,
 			["Berry_Fire"] = 5,
 		},
+		CompletedQuests = {},
 		LastSaveTimestamp = os.time(),
 	}
 end
@@ -148,6 +149,9 @@ local function backfillProfile(profile: Types.PlayerData)
 		if not plotData.PlacedDecorations then
 			plotData.PlacedDecorations = {}
 		end
+	end
+	if not profile.CompletedQuests then
+		profile.CompletedQuests = {}
 	end
 end
 

@@ -11,6 +11,7 @@ local Logger = require(ReplicatedStorage.Shared.Utility.Logger)
 local MonsterDefinitions = require(ReplicatedStorage.Shared.MonsterDefinitions)
 local BreedingMath = require(ReplicatedStorage.Shared.BreedingMath)
 local Network = require(ReplicatedStorage.Shared.Utility.Network)
+local Signal = require(ReplicatedStorage.Shared.Utility.Signal)
 
 local PlayerDataService: any = nil
 local MonsterService: any = nil
@@ -19,6 +20,9 @@ local physicalEggModels: { [string]: Model } = {}
 local eggsFolder: Folder
 
 local BreedingService = {}
+
+-- Fired after an egg has been hatched and the new monster created: (player, newMonster)
+BreedingService.EggHatchedSignal = Signal.new() :: Signal.Signal<Player, Types.MonsterInstance>
 
 local function getEggsFolder(): Folder
 	local folder = Workspace:FindFirstChild("BreedingEggs") :: Folder
@@ -352,6 +356,7 @@ function BreedingService:ClaimHatchedEgg(player: Player, sessionId: string): (bo
 		player.Name, newMonster.SpeciesId, generation, newMonster.UUID)
 
 	Network.FireClient("EggHatched", player, newMonster)
+	BreedingService.EggHatchedSignal:Fire(player, newMonster)
 	return true, newMonster
 end
 

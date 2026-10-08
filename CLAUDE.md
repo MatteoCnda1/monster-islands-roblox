@@ -74,10 +74,10 @@ Il n'existe pas de `src/modules/` versionné (dossier vide, non mappé par Rojo)
   - serveur : `Network.HandleFunction(name, fn)`, `Network.HandleEvent`, `Network.FireClient`, `Network.FireAllClients`
   - client : `Network.InvokeServer`, `Network.FireServer`, `Network.OnClientEvent`
 - Les `HandleFunction` retournent par convention `(success: boolean, errOrPayload)`. Chaque handler valide lui-même
-  les arguments (`typeof(...)`) — il n'y a pas de couche de validation/limitation de débit centralisée, malgré
-  `docs/ARCHITECTURE.md` (issue #22).
+  les arguments (`typeof(...)`) — il n'y a pas de couche de validation ni de limiteur de débit centralisés
+  (cf. `docs/ARCHITECTURE.md` §4.4). Exception à la convention : `GetPlayerData` renvoie directement le profil.
 - Le nom d'un remote est un contrat implicite client↔serveur : vérifier les deux côtés avec
-  `grep -rn '"NomDuRemote"' src`. Plusieurs remotes n'ont qu'un seul côté branché (issue #23).
+  `grep -rn '"NomDuRemote"' src`. Tout remote déclaré doit avoir ses deux côtés branchés.
 
 ### Données data-driven (`src/shared`)
 - `Types.luau` : tous les types partagés (modifier ici d'abord).

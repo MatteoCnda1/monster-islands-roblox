@@ -167,9 +167,9 @@ Les handlers serveur reçoivent `player: Player` en premier argument : il est in
 ### 4.3 Conventions
 
 **Retour des `HandleFunction`.** Les actions qui modifient l'état renvoient `(success: boolean, errOrPayload)` :
-`true` suivi d'un payload éventuel, ou `false` suivi d'un message d'erreur affichable. Les fonctions de lecture
-(`GetPlayerData`, `GetPlayerMonsters`, `GetInventory`, `GetBalance`, `GetActiveQuests`) font exception et renvoient
-directement la donnée (ou `nil` / `{}` si le profil n'est pas chargé).
+`true` suivi d'un payload éventuel, ou `false` suivi d'un message d'erreur affichable. Exception : `GetPlayerData`
+renvoie directement le profil (ou `nil` s'il n'est pas chargé). Les soldes, monstres et inventaire n'ont pas de
+getter dédié : le client les lit dans le profil complet (`GetPlayerData` / `PlayerDataUpdated`).
 
 **Validation par handler.** Chaque handler valide lui-même la forme des arguments avec `typeof(...)` avant de
 déléguer à une méthode du service, qui porte les contrôles métier (profil chargé, propriété du monstre ou de la

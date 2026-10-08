@@ -409,7 +409,11 @@ end
 function CombatController:OnBattleEnded(result: any)
 	self.IsActive = false
 	if self.LogLabel then
-		self.LogLabel.Text = result.Victory and "🎉 VICTORY! You won the battle!" or "💀 DEFEAT! Good fight!"
+		if result.Victory and result.OpponentLeft then
+			self.LogLabel.Text = "🏳️ Your opponent left the battle. VICTORY!"
+		else
+			self.LogLabel.Text = result.Victory and "🎉 VICTORY! You won the battle!" or "💀 DEFEAT! Good fight!"
+		end
 		self.LogLabel.BackgroundColor3 = result.Victory and Color3.fromRGB(50, 180, 80) or Color3.fromRGB(180, 50, 50)
 	end
 

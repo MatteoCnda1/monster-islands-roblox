@@ -14,6 +14,8 @@ local UIController: any = nil
 
 -- Plot models of the local player's island that already have a purchase prompt
 local boundPlotModels: { [Model]: boolean } = {}
+-- Egg models of the local player's nest that already have a hatch prompt
+local boundEggModels: { [Model]: boolean } = {}
 
 local PlotController = {}
 
@@ -95,8 +97,88 @@ local function bindPurchasePrompt(plotModel: Model)
 	table.insert(connections, podium.AncestryChanged:Connect(unbindIfGone))
 end
 
+-- Hatch prompts (issue #29) are created locally on the local player's own eggs, laid by BreedingService
+-- in their island nest (Slot_<n>.BreedingNest.Eggs). The server re-validates via "ClaimBreedingEgg".
+local function bindHatchPrompt(eggModel: Model)
+	if boundEggModels[eggModel] then return end
+	if eggModel:GetAttribute("OwnerUserId") ~= localPlayer.UserId then return end
+	local sessionId = eggModel:GetAttribute("BreedingSessionId")
+	if typeof(sessionId) ~= "string" then return end
+
+	local shell = eggModel:WaitForChild("EggShell", 10)
+	if not shell or boundEggModels[eggModel] or not eggModel.Parent then return end
+	boundEggModels[eggModel] = true
+
+	local speciesName = eggModel:GetAttribute("SpeciesDisplayName")
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "HatchPrompt"
+	prompt.ActionText = "🐣 Hatch Egg"
+	prompt.ObjectText = if typeof(speciesName) == "string" then speciesName else "Egg"
+	prompt.HoldDuration = 0.5
+	prompt.MaxActivationDistance = 12
+	prompt.Enabled = eggModel:GetAttribute("IsReady") == true
+	prompt.Parent = shell
+
+	local connections: { RBXScriptConnection } = {}
+
+	table.insert(connections, eggModel:GetAttributeChangedSignal("IsReady"):Connect(function()
+		prompt.Enabled = eggModel:GetAttribute("IsReady") == true
+	end))
+
+	local hatching = false
+	table.insert(connections, prompt.Triggered:Connect(function()
+		if hatching then return end
+		hatching = true
+		prompt.Enabled = false
+		local ok, success, err = pcall(Network.InvokeServer, "ClaimBreedingEgg", sessionId)
+		hatching = false
+		-- Success is notified through the "EggHatched" event (UIController); the egg is then destroyed
+		if not ok or not success then
+			local reason = if ok then tostring(err or "Hatching failed") else "Hatching failed"
+			Logger:Info("BREEDING", "Hatching egg %s failed: %s", sessionId, reason)
+			notify(reason, Color3.fromRGB(220, 80, 80))
+			if prompt.Parent then
+				prompt.Enabled = eggModel:GetAttribute("IsReady") == true
+			end
+		end
+	end))
+
+	-- Egg hatched / owner left (model destroyed) or shell streamed out: unbind so it can be bound again
+	local function unbindIfGone()
+		if eggModel:IsDescendantOf(Workspace) and shell:IsDescendantOf(eggModel) then return end
+		boundEggModels[eggModel] = nil
+		for _, connection in ipairs(connections) do
+			connection:Disconnect()
+		end
+		prompt:Destroy()
+	end
+	table.insert(connections, eggModel.AncestryChanged:Connect(unbindIfGone))
+	table.insert(connections, shell.AncestryChanged:Connect(unbindIfGone))
+end
+
+local function onEggModelAdded(eggModel: Model)
+	task.spawn(bindHatchPrompt, eggModel)
+	-- A shell streamed back in comes as a new instance: bind it again
+	eggModel.ChildAdded:Connect(function(child)
+		if child.Name == "EggShell" then
+			task.spawn(bindHatchPrompt, eggModel)
+		end
+	end)
+end
+
 local function watchSlotFolder(slotFolder: Instance)
 	if slotFolder:GetAttribute("OwnerUserId") ~= localPlayer.UserId then return end
+
+	-- Eggs of the island nest (nest and eggs folder may stream in after the slot folder)
+	local function onDescendant(descendant: Instance)
+		if descendant:IsA("Model") and descendant:GetAttribute("BreedingSessionId") ~= nil then
+			onEggModelAdded(descendant :: Model)
+		end
+	end
+	slotFolder.DescendantAdded:Connect(onDescendant)
+	for _, descendant in ipairs(slotFolder:GetDescendants()) do
+		onDescendant(descendant)
+	end
 
 	local function onChild(child: Instance)
 		if child:IsA("Model") and child:GetAttribute("PlotId") ~= nil then

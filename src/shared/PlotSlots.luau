@@ -40,6 +40,27 @@ function PlotSlots.GetPlotWorldPosition(slotIndex: number, plotConfig: Types.Plo
 	return PlotSlots.ToWorldPosition(slotIndex, plotConfig.LocalPosition)
 end
 
+-- Center of the top surface of the slot's breeding nest (issue #29): eggs are laid on it
+function PlotSlots.GetNestTopWorldPosition(slotIndex: number): Vector3
+	local slotConfig = Config.PLOT_SLOTS
+	local base = PlotSlots.ToWorldPosition(slotIndex, slotConfig.NEST_LOCAL_POSITION)
+	return Vector3.new(base.X, base.Y + slotConfig.NEST_SIZE.Y, base.Z)
+end
+
+-- Horizontal offset (y = 0) of the n-th egg in the nest: the first one in the center, the next ones
+-- on a ring of radius NEST_EGG_SPREAD_RADIUS (6 per ring, the following ones staggered by half a step)
+-- so eggs do not pile up on each other and keep the same spot when rebuilt.
+function PlotSlots.GetNestEggOffset(eggIndex: number): Vector3
+	if eggIndex <= 1 then
+		return Vector3.new(0, 0, 0)
+	end
+	local radius = Config.PLOT_SLOTS.NEST_EGG_SPREAD_RADIUS
+	local ringIndex = eggIndex - 2 -- 0-based position among the ring eggs
+	local stagger = (math.floor(ringIndex / 6) % 2) * 0.5
+	local angle = ((ringIndex % 6) + stagger) * (2 * math.pi / 6)
+	return Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
+end
+
 -- Bridge from the village spawn to the edge of the slot's island (both points at y = 0).
 -- The island is an axis-aligned box, so the edge distance depends on the bridge direction.
 function PlotSlots.GetBridgeEndpoints(slotIndex: number): (Vector3, Vector3)

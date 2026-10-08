@@ -642,6 +642,7 @@ function CombatService:_finishBattle(battle: BattleInstance, winnerUserId: numbe
 		if isPlayerPresent(a.Player) then
 			local reward = isAWinner and Config.COMBAT.VICTORY_REWARDS or Config.COMBAT.DEFEAT_REWARDS
 			EconomyService:AddCoins(a.Player, reward.Coins, isAWinner and "PvP Battle Victory" or "PvP Battle Consolation")
+			PlayerDataService:AddPlayerXP(a.Player, reward.XP, isAWinner and "Battle Victory" or "Battle Defeat")
 			Network.FireClient("BattleEnded", a.Player, {
 				Victory = isAWinner,
 				CoinsGained = reward.Coins,
@@ -656,6 +657,7 @@ function CombatService:_finishBattle(battle: BattleInstance, winnerUserId: numbe
 		if isPlayerPresent(b.Player) then
 			local reward = isBWinner and Config.COMBAT.VICTORY_REWARDS or Config.COMBAT.DEFEAT_REWARDS
 			EconomyService:AddCoins(b.Player, reward.Coins, isBWinner and "PvP Battle Victory" or "PvP Battle Consolation")
+			PlayerDataService:AddPlayerXP(b.Player, reward.XP, isBWinner and "Battle Victory" or "Battle Defeat")
 			Network.FireClient("BattleEnded", b.Player, {
 				Victory = isBWinner,
 				CoinsGained = reward.Coins,

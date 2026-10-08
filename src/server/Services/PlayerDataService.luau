@@ -9,6 +9,7 @@ local Types = require(ReplicatedStorage.Shared.Types)
 local Config = require(ReplicatedStorage.Shared.Config)
 local Logger = require(ReplicatedStorage.Shared.Utility.Logger)
 local MonsterDefinitions = require(ReplicatedStorage.Shared.MonsterDefinitions)
+local ProgressionMath = require(ReplicatedStorage.Shared.ProgressionMath)
 local Network = require(ReplicatedStorage.Shared.Utility.Network)
 
 --[[
@@ -687,6 +688,49 @@ function PlayerDataService:UpdateProfile(player: Player, updater: (profile: Type
 	-- Sync changes to client
 	Network.FireClient("PlayerDataUpdated", player, profile)
 	return true
+end
+
+-- The ONLY entry point granting player XP (combat rewards, quests…), issue #17.
+-- Validates the amount, applies every level-up in a single UpdateProfile (curve: ProgressionMath /
+-- Config.PROGRESSION) and fires "PlayerLevelUp" to the client when the level changed.
+-- Returns (success, levelsGained).
+function PlayerDataService:AddPlayerXP(player: Player, amount: number, reason: string): (boolean, number)
+	if not ProgressionMath.IsValidXPAmount(amount) then
+		Logger:Warn("PROGRESSION", "Rejected invalid XP amount for %s: %s (Reason: %s)", player.Name, tostring(amount), tostring(reason))
+		return false, 0
+	end
+
+	local cleanAmount = math.floor(amount)
+	local oldLevel = 0
+	local newLevel = 0
+	local newXP = 0
+	local levelsGained = 0
+	local success = self:UpdateProfile(player, function(profile: Types.PlayerData)
+		oldLevel = profile.Progression.Level
+		local level, xp, gained = ProgressionMath.ApplyXP(profile.Progression.Level, profile.Progression.XP, cleanAmount)
+		profile.Progression.Level = level
+		profile.Progression.XP = xp
+		newLevel = level
+		newXP = xp
+		levelsGained = gained
+	end)
+
+	if not success then
+		return false, 0
+	end
+
+	Logger:Info("PROGRESSION", "Added %d XP to %s (Reason: %s, Level %d, XP %d)", cleanAmount, player.Name, tostring(reason), newLevel, newXP)
+	if levelsGained > 0 then
+		Logger:Info("PROGRESSION", "%s leveled up: %d -> %d", player.Name, oldLevel, newLevel)
+		Network.FireClient("PlayerLevelUp", player, {
+			OldLevel = oldLevel,
+			NewLevel = newLevel,
+			LevelsGained = levelsGained,
+			Reason = reason,
+		})
+	end
+
+	return true, levelsGained
 end
 
 return PlayerDataService

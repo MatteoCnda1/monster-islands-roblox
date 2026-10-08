@@ -600,6 +600,101 @@ test("Combat config is coherent (chances and rewards)", function()
 	assert_true(Config.BREEDING.BASE_MUTATION_CHANCE > 0 and Config.BREEDING.BASE_MUTATION_CHANCE < 1)
 end)
 
+-- PLAYER PROGRESSION (issue #17)
+print("\n[Suite: Player Progression]")
+local ProgressionMath = loadShared("ProgressionMath")
+
+test("Progression curve: 120/180/240/300 XP per level, cumulative 840 XP to reach level 5", function()
+	assert_eq(ProgressionMath.GetXPToNextLevel(1), 120)
+	assert_eq(ProgressionMath.GetXPToNextLevel(2), 180)
+	assert_eq(ProgressionMath.GetXPToNextLevel(3), 240)
+	assert_eq(ProgressionMath.GetXPToNextLevel(4), 300)
+	assert_eq(ProgressionMath.GetTotalXPForLevel(1), 0)
+	assert_eq(ProgressionMath.GetTotalXPForLevel(2), 120)
+	assert_eq(ProgressionMath.GetTotalXPForLevel(3), 300)
+	assert_eq(ProgressionMath.GetTotalXPForLevel(5), 840)
+end)
+
+test("Progression pacing: level 2 after 2-3 victories, plots 3-5 reachable", function()
+	local win = Config.COMBAT.VICTORY_REWARDS.XP
+	local level = 1
+	local xp = 0
+	local wins = 0
+	while level < 2 do
+		level, xp = ProgressionMath.ApplyXP(level, xp, win)
+		wins += 1
+	end
+	assert_true(wins >= 2 and wins <= 3, "victories to level 2: " .. wins)
+	for _, plot in ipairs(Config.PLOTS) do
+		assert_true(plot.RequiredLevel <= ProgressionMath.GetMaxLevel(), "plot " .. plot.Id .. " level unreachable")
+	end
+end)
+
+test("ApplyXP below the threshold only accumulates XP", function()
+	local level, xp, gained = ProgressionMath.ApplyXP(1, 0, 50)
+	assert_eq(level, 1)
+	assert_eq(xp, 50)
+	assert_eq(gained, 0)
+end)
+
+test("ApplyXP levels up exactly at the threshold and keeps the overflow", function()
+	local level, xp, gained = ProgressionMath.ApplyXP(1, 100, 20)
+	assert_eq(level, 2)
+	assert_eq(xp, 0)
+	assert_eq(gained, 1)
+	level, xp, gained = ProgressionMath.ApplyXP(1, 100, 50)
+	assert_eq(level, 2)
+	assert_eq(xp, 30)
+	assert_eq(gained, 1)
+end)
+
+test("ApplyXP can grant several levels at once", function()
+	local level, xp, gained = ProgressionMath.ApplyXP(1, 0, 850)
+	assert_eq(level, 5)
+	assert_eq(xp, 10)
+	assert_eq(gained, 4)
+end)
+
+test("ApplyXP ignores 0, negative, fractional, NaN, infinite and non-number amounts", function()
+	for _, amount in ipairs({ 0, -50, 0.5, 0 / 0, math.huge, -math.huge, "100" } :: { any }) do
+		assert_false(ProgressionMath.IsValidXPAmount(amount), tostring(amount))
+		local level, xp, gained = ProgressionMath.ApplyXP(2, 30, amount)
+		assert_eq(level, 2, tostring(amount))
+		assert_eq(xp, 30, tostring(amount))
+		assert_eq(gained, 0, tostring(amount))
+	end
+	assert_true(ProgressionMath.IsValidXPAmount(1))
+	assert_true(ProgressionMath.IsValidXPAmount(15.7))
+	local _, xp = ProgressionMath.ApplyXP(1, 0, 15.7)
+	assert_eq(xp, 15, "fractional amounts are floored")
+end)
+
+test("ApplyXP stops at the max level and discards the overflow", function()
+	local maxLevel = ProgressionMath.GetMaxLevel()
+	assert_true(maxLevel >= 5)
+	assert_eq(ProgressionMath.GetXPToNextLevel(maxLevel), 0)
+	local level, xp, gained = ProgressionMath.ApplyXP(1, 0, 10 ^ 9)
+	assert_eq(level, maxLevel)
+	assert_eq(xp, 0)
+	assert_eq(gained, maxLevel - 1)
+	level, xp, gained = ProgressionMath.ApplyXP(maxLevel, 0, 500)
+	assert_eq(level, maxLevel)
+	assert_eq(xp, 0)
+	assert_eq(gained, 0)
+end)
+
+test("ApplyXP sanitizes corrupted stored state", function()
+	local level, xp, gained = ProgressionMath.ApplyXP(0 / 0, -20, 50)
+	assert_eq(level, 1)
+	assert_eq(xp, 50)
+	assert_eq(gained, 0)
+	-- Legacy XP above the threshold (quests used to add XP without level-ups) is normalized
+	level, xp, gained = ProgressionMath.ApplyXP(1, 225, 50)
+	assert_eq(level, 2)
+	assert_eq(xp, 155)
+	assert_eq(gained, 1)
+end)
+
 print("\n========================================")
 print(string.format(" Test Results: %d Passed, %d Failed (Total: %d)", passedTests, failedTests, totalTests))
 print("========================================")

@@ -31,6 +31,17 @@ local Config = {
 	},
 
 	STARTING_MONSTER_SPECIES = "emberfox",
+	STARTING_MONSTER_NICKNAME = "Blaze",
+
+	-- Second starter monster (issue #16): breeding needs two monsters, so every player also gets one
+	-- of these, drawn at random. Only species breeding-compatible with the starter in BOTH parent
+	-- orders belong here (the breeding UI picks parents in arbitrary order): aquaphin is left out
+	-- because emberfox does not accept Water (see StarterMonsters / BreedingMath.AreCompatible).
+	SECOND_STARTER_POOL = {
+		{ SpeciesId = "mossaur", Nickname = "Moss" },
+		{ SpeciesId = "zephlyn", Nickname = "Gust" },
+	} :: { { SpeciesId: string, Nickname: string } },
+	STARTER_IV_RANGE = { Min = 6, Max = 12 }, -- IVs rolled for both starters
 
 	MAX_TEAM_SIZE = 3,
 

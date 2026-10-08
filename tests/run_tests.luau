@@ -600,6 +600,169 @@ test("Combat config is coherent (chances and rewards)", function()
 	assert_true(Config.BREEDING.BASE_MUTATION_CHANCE > 0 and Config.BREEDING.BASE_MUTATION_CHANCE < 1)
 end)
 
+-- 8. STARTER MONSTERS (issue #16)
+print("\n[Suite: Starter Monsters]")
+local StarterMonsters = loadShared("StarterMonsters")
+
+-- Minimal profile with Config.PLOTS (plot 1 unlocked only) and no monster.
+local function emptyStarterProfile(): any
+	local plots = {}
+	for _, plotConfig in ipairs(Config.PLOTS) do
+		plots[tostring(plotConfig.Id)] = {
+			Id = plotConfig.Id,
+			IsUnlocked = plotConfig.Id == 1,
+			PlacedMonsters = {},
+			PlacedDecorations = {},
+		}
+	end
+	return { Monsters = {}, TeamMonsterUUIDs = {}, Plots = plots }
+end
+
+local function uuidSequence(): () -> string
+	local n = 0
+	return function(): string
+		n += 1
+		return "uuid-" .. n
+	end
+end
+
+test("Second starter pool: valid species, not the starter, breed with it in both orders", function()
+	assert_true(#Config.SECOND_STARTER_POOL >= 1)
+	for _, entry in ipairs(Config.SECOND_STARTER_POOL) do
+		assert_true(MonsterDefinitions.Get(entry.SpeciesId) ~= nil, entry.SpeciesId)
+		assert_true(entry.SpeciesId ~= Config.STARTING_MONSTER_SPECIES, entry.SpeciesId)
+		assert_true(StarterMonsters.CanBreedTogether(Config.STARTING_MONSTER_SPECIES, entry.SpeciesId), entry.SpeciesId)
+	end
+	-- Why aquaphin is not in the pool: emberfox does not accept Water.
+	assert_false(StarterMonsters.CanBreedTogether("emberfox", "aquaphin"))
+	assert_false(StarterMonsters.CanBreedTogether("emberfox", "unknown_species"))
+end)
+
+test("Starter IVs are rolled within Config.STARTER_IV_RANGE", function()
+	for _ = 1, 200 do
+		local ivs = StarterMonsters.RollIVs()
+		for _, stat in ipairs({ "Health", "Attack", "Defense", "Speed" }) do
+			assert_true(ivs[stat] >= Config.STARTER_IV_RANGE.Min and ivs[stat] <= Config.STARTER_IV_RANGE.Max, stat)
+		end
+	end
+end)
+
+test("Build gives a level-1 generation-1 monster with real stats and a copy of the species skills", function()
+	local ivs = { Health = 6, Attack = 7, Defense = 8, Speed = 9 }
+	local m = StarterMonsters.Build("u1", "mossaur", "Moss", ivs, 1234)
+	local stats, maxHealth = MonsterDefinitions.CalculateStats("mossaur", 1, ivs)
+	assert_eq(m.UUID, "u1")
+	assert_eq(m.SpeciesId, "mossaur")
+	assert_eq(m.Nickname, "Moss")
+	assert_eq(m.Level, 1)
+	assert_eq(m.XP, 0)
+	assert_eq(m.Generation, 1)
+	assert_eq(m.MaxHealth, maxHealth)
+	assert_eq(m.CurrentHealth, maxHealth)
+	assert_eq(m.CalculatedStats.Attack, stats.Attack)
+	assert_eq(m.AssignedPlotId, nil)
+	assert_eq(m.CreatedAt, 1234)
+	local def = MonsterDefinitions.Get("mossaur")
+	assert_eq(#m.SkillsEquipped, #def.Skills)
+	assert_eq(m.SkillsEquipped[1], def.Skills[1])
+	assert_true(m.SkillsEquipped ~= def.Skills, "skills must be copied, not shared with the definition")
+	assert_errors(function()
+		StarterMonsters.Build("u2", "unknown_species", nil, ivs, 0)
+	end)
+end)
+
+test("New profile gets Blaze + a second starter, both in the team and on plot 1", function()
+	local profile = emptyStarterProfile()
+	-- 4 IVs for Blaze, candidate pick (2 -> zephlyn), 4 IVs for the second starter
+	local rand = scriptedRandom({ 6, 7, 8, 9, 2, 12, 11, 10, 6 })
+	local added = StarterMonsters.EnsureStarters(profile, uuidSequence(), rand, 100)
+	assert_eq(#added, 2)
+	assert_eq(StarterMonsters.CountMonsters(profile), 2)
+
+	local blaze = profile.Monsters["uuid-1"]
+	assert_eq(blaze.SpeciesId, Config.STARTING_MONSTER_SPECIES)
+	assert_eq(blaze.Nickname, Config.STARTING_MONSTER_NICKNAME)
+	assert_eq(blaze.IVs.Speed, 9)
+	local second = profile.Monsters["uuid-2"]
+	assert_eq(second.SpeciesId, "zephlyn")
+	assert_eq(second.Nickname, "Gust")
+	assert_eq(second.IVs.Health, 12)
+
+	assert_eq(#profile.TeamMonsterUUIDs, 2)
+	assert_eq(profile.TeamMonsterUUIDs[1], "uuid-1")
+	assert_eq(profile.TeamMonsterUUIDs[2], "uuid-2")
+	assert_true(#profile.TeamMonsterUUIDs <= Config.MAX_TEAM_SIZE)
+	local plot1 = profile.Plots["1"]
+	assert_eq(#plot1.PlacedMonsters, 2)
+	assert_true(#plot1.PlacedMonsters <= Config.PLOTS[1].MaxMonstersCapacity)
+	assert_eq(blaze.AssignedPlotId, 1)
+	assert_eq(second.AssignedPlotId, 1)
+	assert_true(StarterMonsters.CanBreedTogether(blaze.SpeciesId, second.SpeciesId))
+end)
+
+test("EnsureStarters is idempotent: no monster added from two monsters on", function()
+	local profile = emptyStarterProfile()
+	StarterMonsters.EnsureStarters(profile, uuidSequence(), nil, 0)
+	local added = StarterMonsters.EnsureStarters(profile, function(): string
+		error("no UUID must be generated")
+	end, function(): number
+		error("no random roll must happen")
+	end, 0)
+	assert_eq(#added, 0)
+	assert_eq(StarterMonsters.CountMonsters(profile), 2)
+	assert_eq(#profile.TeamMonsterUUIDs, 2)
+	assert_eq(#profile.Plots["1"].PlacedMonsters, 2)
+end)
+
+test("Legacy one-monster profile is topped up with a compatible second starter (backfill)", function()
+	local profile = emptyStarterProfile()
+	local blaze = StarterMonsters.Build("blaze", "emberfox", "Blaze", { Health = 8, Attack = 8, Defense = 8, Speed = 8 }, 0)
+	StarterMonsters.AddToProfile(profile, blaze)
+	local rand = scriptedRandom({ 1, 6, 6, 6, 6 }) -- candidate pick (1 -> mossaur), then 4 IVs
+	local added = StarterMonsters.EnsureStarters(profile, uuidSequence(), rand, 0)
+	assert_eq(#added, 1)
+	assert_eq(added[1].SpeciesId, "mossaur")
+	assert_eq(profile.Monsters["blaze"].Nickname, "Blaze", "existing monster untouched")
+	assert_eq(StarterMonsters.CountMonsters(profile), 2)
+	assert_eq(#profile.TeamMonsterUUIDs, 2)
+	assert_eq(added[1].AssignedPlotId, 1)
+end)
+
+test("Second starter candidates match the monster already owned (fallback: whole pool)", function()
+	-- noctyra (Shadow) breeds with zephlyn (Wind) but not with mossaur (Nature/Earth)
+	local candidates = StarterMonsters.GetSecondStarterCandidates({ "noctyra" })
+	assert_eq(#candidates, 1)
+	assert_eq(candidates[1].SpeciesId, "zephlyn")
+	-- voidfox (Fire/Shadow) accepts neither: fall back to the whole pool
+	assert_eq(#StarterMonsters.GetSecondStarterCandidates({ "voidfox" }), #Config.SECOND_STARTER_POOL)
+	assert_eq(#StarterMonsters.GetSecondStarterCandidates({}), #Config.SECOND_STARTER_POOL)
+end)
+
+test("A new monster skips a full team and full or locked plots (stays unassigned)", function()
+	local profile = emptyStarterProfile()
+	profile.TeamMonsterUUIDs = {}
+	for i = 1, Config.MAX_TEAM_SIZE do
+		table.insert(profile.TeamMonsterUUIDs, "team-" .. i)
+	end
+	for i = 1, Config.PLOTS[1].MaxMonstersCapacity do
+		table.insert(profile.Plots["1"].PlacedMonsters, "placed-" .. i)
+	end
+
+	local m = StarterMonsters.Build("new", "mossaur", nil, { Health = 6, Attack = 6, Defense = 6, Speed = 6 }, 0)
+	StarterMonsters.AddToProfile(profile, m)
+	assert_true(profile.Monsters["new"] == m)
+	assert_eq(#profile.TeamMonsterUUIDs, Config.MAX_TEAM_SIZE)
+	assert_false(table.find(profile.TeamMonsterUUIDs, "new"))
+	assert_eq(m.AssignedPlotId, nil, "plot 2 is locked")
+
+	-- Once plot 2 is unlocked, the next monster lands there
+	profile.Plots["2"].IsUnlocked = true
+	local m2 = StarterMonsters.Build("new2", "zephlyn", nil, { Health = 6, Attack = 6, Defense = 6, Speed = 6 }, 0)
+	StarterMonsters.AddToProfile(profile, m2)
+	assert_eq(m2.AssignedPlotId, 2)
+	assert_eq(profile.Plots["2"].PlacedMonsters[1], "new2")
+end)
+
 print("\n========================================")
 print(string.format(" Test Results: %d Passed, %d Failed (Total: %d)", passedTests, failedTests, totalTests))
 print("========================================")

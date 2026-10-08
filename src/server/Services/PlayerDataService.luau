@@ -8,7 +8,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Types = require(ReplicatedStorage.Shared.Types)
 local Config = require(ReplicatedStorage.Shared.Config)
 local Logger = require(ReplicatedStorage.Shared.Utility.Logger)
-local MonsterDefinitions = require(ReplicatedStorage.Shared.MonsterDefinitions)
+local StarterMonsters = require(ReplicatedStorage.Shared.StarterMonsters)
 local Network = require(ReplicatedStorage.Shared.Utility.Network)
 
 --[[
@@ -73,53 +73,23 @@ local serverId: string = if game.JobId ~= "" then game.JobId else "Studio"
 
 local PlayerDataService = {}
 
-local function generateStarterIVs(): Types.MonsterIVs
-	return {
-		Health = math.random(6, 12),
-		Attack = math.random(6, 12),
-		Defense = math.random(6, 12),
-		Speed = math.random(6, 12),
-	}
+local function generateUUID(): string
+	return HttpService:GenerateGUID(false)
 end
 
 local function createDefaultProfile(): Types.PlayerData
-	local starterSpecies = Config.STARTING_MONSTER_SPECIES
-	local starterIVs = generateStarterIVs()
-	local calculatedStats, maxHealth = MonsterDefinitions.CalculateStats(starterSpecies, 1, starterIVs)
-	local starterUUID = HttpService:GenerateGUID(false)
-
-	local starterMonster: Types.MonsterInstance = {
-		UUID = starterUUID,
-		SpeciesId = starterSpecies,
-		Nickname = "Blaze",
-		Level = 1,
-		XP = 0,
-		CurrentHealth = maxHealth,
-		MaxHealth = maxHealth,
-		IVs = starterIVs,
-		CalculatedStats = calculatedStats,
-		SkillsEquipped = { "FlameBurst", "QuickStrike" },
-		Parents = nil,
-		Generation = 1,
-		AssignedPlotId = 1,
-		CreatedAt = os.time(),
-	}
-
 	local plots: { [string]: Types.PlotData } = {}
 	for _, plotConfig in ipairs(Config.PLOTS) do
 		plots[tostring(plotConfig.Id)] = {
 			Id = plotConfig.Id,
 			IsUnlocked = (plotConfig.Id == 1), -- Plot 1 is unlocked for free by default
 			UnlockedAt = (plotConfig.Id == 1) and os.time() or nil,
-			PlacedMonsters = (plotConfig.Id == 1) and { starterUUID } or {},
+			PlacedMonsters = {},
 			PlacedDecorations = {},
 		}
 	end
 
-	local monsters: { [string]: Types.MonsterInstance } = {}
-	monsters[starterUUID] = starterMonster
-
-	return {
+	local profile: Types.PlayerData = {
 		Version = Config.DATA_VERSION,
 		Currency = {
 			Coins = Config.STARTING_CURRENCY.Coins,
@@ -129,8 +99,8 @@ local function createDefaultProfile(): Types.PlayerData
 			Level = Config.STARTING_PROGRESSION.Level,
 			XP = Config.STARTING_PROGRESSION.XP,
 		},
-		Monsters = monsters,
-		TeamMonsterUUIDs = { starterUUID },
+		Monsters = {},
+		TeamMonsterUUIDs = {},
 		Plots = plots,
 		BreedingSessions = {},
 		Inventory = {
@@ -140,6 +110,11 @@ local function createDefaultProfile(): Types.PlayerData
 		CompletedQuests = {},
 		LastSaveTimestamp = os.time(),
 	}
+
+	-- Emberfox "Blaze" + a second, breeding-compatible starter (issue #16): both join the team
+	-- and plot 1 (capacity 2).
+	StarterMonsters.EnsureStarters(profile, generateUUID, math.random, os.time())
+	return profile
 end
 
 -- Ensure newer fields exist on existing profiles (fields added after a profile was first saved).
@@ -153,6 +128,10 @@ local function backfillProfile(profile: Types.PlayerData)
 	if not profile.CompletedQuests then
 		profile.CompletedQuests = {}
 	end
+	-- Profiles created before issue #16 own a single monster and cannot breed: top them up with a
+	-- second starter (team / first unlocked plot only if there is room). Idempotent (no-op from 2
+	-- monsters on) and non-yielding (GenerateGUID and CalculateStats do not yield).
+	StarterMonsters.EnsureStarters(profile, generateUUID, math.random, os.time())
 end
 
 -- Schema migrations, keyed by the version they upgrade FROM: MIGRATIONS[1] turns a v1 profile into v2.

@@ -3,9 +3,22 @@ local Types = require(script.Parent.Types)
 
 local Config = {
 	-- Player profile defaults
-	DATA_VERSION = 1,
+	DATA_VERSION = 1, -- Profile schema version (stored in profile.Version, upgraded on load). NOT part of the DataStore name.
 	AUTOSAVE_INTERVAL_SECONDS = 180,
 	STUDIO_MOCK_DATASTORE = true, -- Falls back to in-memory profile if DataStore is disabled in Studio
+
+	-- Persistence & session locking (see docs/ARCHITECTURE.md section 3)
+	DATASTORE = {
+		-- Fixed name: never derive it from DATA_VERSION, or every player would restart from scratch.
+		-- Legacy saves (before session locking) live under this exact name.
+		NAME = "MonsterIslands_PlayerData_v1",
+		LOAD_MAX_ATTEMPTS = 5, -- DataStore read errors tolerated before kicking the player
+		LOAD_RETRY_DELAY_SECONDS = 2, -- Base delay between retries (multiplied by the attempt number)
+		LOCK_WAIT_SECONDS = 20, -- How long a joining player waits for another server to release its lock
+		LOCK_STALE_SECONDS = 600, -- A lock not refreshed for this long is considered abandoned (crashed server)
+		FINAL_SAVE_MAX_ATTEMPTS = 3, -- Attempts for the releasing save (PlayerRemoving / BindToClose)
+		SHUTDOWN_TIMEOUT_SECONDS = 25, -- BindToClose budget (Roblox hard limit is 30 s)
+	},
 
 	STARTING_CURRENCY = {
 		Coins = 500,

@@ -58,10 +58,15 @@ Il n'existe pas de `src/modules/` versionné (dossier vide, non mappé par Rojo)
   l'updater sous `pcall` puis **renvoie le profil complet au client** via `PlayerDataUpdated`.
 - Au chargement, le client reçoit `PlayerDataLoaded` ; les controllers lisent aussi `GetPlayerData`.
 - En Studio avec `Config.STUDIO_MOCK_DATASTORE = true`, aucun DataStore : profils en mémoire uniquement.
-- Le nom du DataStore inclut `Config.DATA_VERSION`. Les champs ajoutés aux profils doivent être rétro-remplis
-  dans `_loadPlayerProfile` (cf. `PlacedDecorations`) et ajoutés dans `createDefaultProfile`.
-- Limites connues : pas de session locking, et un `GetAsync` en échec crée un profil par défaut qui écrase la
-  sauvegarde réelle (issue #20).
+- Nom de DataStore **fixe** (`Config.DATASTORE.NAME` = `MonsterIslands_PlayerData_v1`, à ne jamais changer) ;
+  la version de schéma est le champ `Version` du profil, mis à niveau au chargement par `migrateProfile`
+  (table `MIGRATIONS`). Les champs ajoutés aux profils doivent être rétro-remplis dans `backfillProfile`
+  (cf. `PlacedDecorations`) et ajoutés dans `createDefaultProfile`. Ces deux fonctions tournent dans une
+  transformation `UpdateAsync` : ni yield, ni effet de bord hors du profil.
+- Verrou de session maison via `UpdateAsync` (issue #20, détails dans `docs/ARCHITECTURE.md` §3) : une erreur de
+  lecture n'aboutit jamais à un profil neuf (réessais puis `Kick`), et un serveur n'écrit que tant qu'il détient
+  le verrou. Le format stocké est `{ RecordFormat, Profile, SessionLock }` (les anciennes sauvegardes « profil
+  brut » sont relues telles quelles). Lors d'une mise en ligne, préférer « Shut down all servers ».
 
 ### Réseau
 - Tous les remotes passent par `src/shared/Utility/Network.luau`, référencés **par nom (string)** et créés à la

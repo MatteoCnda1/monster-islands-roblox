@@ -600,6 +600,86 @@ test("Combat config is coherent (chances and rewards)", function()
 	assert_true(Config.BREEDING.BASE_MUTATION_CHANCE > 0 and Config.BREEDING.BASE_MUTATION_CHANCE < 1)
 end)
 
+-- 8. MATCHMAKING (issue #31)
+print("\n[Suite: Matchmaking]")
+local MatchmakingRules = loadShared("MatchmakingRules")
+
+local function slots(list: { number }): string
+	local parts = {}
+	for _, slot in ipairs(list) do
+		table.insert(parts, tostring(slot))
+	end
+	return "{" .. table.concat(parts, ",") .. "}"
+end
+
+test("Pairing: both eligible players start a battle, nobody is requeued or dropped", function()
+	local r = MatchmakingRules.ResolvePair(true, true)
+	assert_true(r.StartBattle)
+	assert_eq(slots(r.Requeue), "{}")
+	assert_eq(slots(r.Dropped), "{}")
+end)
+
+test("Pairing: the eligible player keeps the head of the queue when the other is in battle/disconnected", function()
+	local r1 = MatchmakingRules.ResolvePair(false, true)
+	assert_false(r1.StartBattle)
+	assert_eq(slots(r1.Requeue), "{2}")
+	assert_eq(slots(r1.Dropped), "{1}")
+
+	local r2 = MatchmakingRules.ResolvePair(true, false)
+	assert_false(r2.StartBattle)
+	assert_eq(slots(r2.Requeue), "{1}")
+	assert_eq(slots(r2.Dropped), "{2}")
+end)
+
+test("Pairing: two ineligible players are both dropped", function()
+	local r = MatchmakingRules.ResolvePair(false, false)
+	assert_false(r.StartBattle)
+	assert_eq(slots(r.Requeue), "{}")
+	assert_eq(slots(r.Dropped), "{1,2}")
+end)
+
+test("Failed battle: the blamed player is dropped, the innocent one is requeued", function()
+	local r1 = MatchmakingRules.ResolveFailedBattle(true, true, 1)
+	assert_eq(slots(r1.Requeue), "{2}")
+	assert_eq(slots(r1.Dropped), "{1}")
+
+	local r2 = MatchmakingRules.ResolveFailedBattle(true, true, 2)
+	assert_eq(slots(r2.Requeue), "{1}")
+	assert_eq(slots(r2.Dropped), "{2}")
+	assert_false(r2.StartBattle)
+end)
+
+test("Failed battle: an innocent player who left or entered a battle meanwhile is not requeued", function()
+	local r = MatchmakingRules.ResolveFailedBattle(true, false, 1)
+	assert_eq(slots(r.Requeue), "{}")
+	assert_eq(slots(r.Dropped), "{1,2}")
+end)
+
+test("Failed battle: without a culprit, eligibility decides; both eligible are dropped (no retry loop)", function()
+	local r1 = MatchmakingRules.ResolveFailedBattle(false, true, nil)
+	assert_eq(slots(r1.Requeue), "{2}")
+	assert_eq(slots(r1.Dropped), "{1}")
+
+	local r2 = MatchmakingRules.ResolveFailedBattle(true, true, nil)
+	assert_eq(slots(r2.Requeue), "{}")
+	assert_eq(slots(r2.Dropped), "{1,2}")
+end)
+
+test("Every non-battle resolution drops at least one player (matching loop always terminates)", function()
+	for _, e1 in ipairs({ true, false }) do
+		for _, e2 in ipairs({ true, false }) do
+			local pair = MatchmakingRules.ResolvePair(e1, e2)
+			assert_true(pair.StartBattle or #pair.Dropped >= 1, "ResolvePair")
+			assert_eq(#pair.Requeue + #pair.Dropped, pair.StartBattle and 0 or 2)
+			for _, blamed in ipairs({ 1, 2, 0 }) do
+				local failed = MatchmakingRules.ResolveFailedBattle(e1, e2, if blamed == 0 then nil else blamed)
+				assert_true(#failed.Dropped >= 1, "ResolveFailedBattle")
+				assert_eq(#failed.Requeue + #failed.Dropped, 2)
+			end
+		end
+	end
+end)
+
 print("\n========================================")
 print(string.format(" Test Results: %d Passed, %d Failed (Total: %d)", passedTests, failedTests, totalTests))
 print("========================================")

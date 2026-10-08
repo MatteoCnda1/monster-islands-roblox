@@ -8,6 +8,7 @@ local Config = require(ReplicatedStorage.Shared.Config)
 local Logger = require(ReplicatedStorage.Shared.Utility.Logger)
 local Network = require(ReplicatedStorage.Shared.Utility.Network)
 local MonsterDefinitions = require(ReplicatedStorage.Shared.MonsterDefinitions)
+local ProgressionMath = require(ReplicatedStorage.Shared.ProgressionMath)
 
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui") :: PlayerGui
@@ -90,6 +91,12 @@ function UIController:Init()
 
 	Network.OnClientEvent("DecorationPlaced", function(data: any)
 		self:ShowNotification("Placed decoration on Plot!", Color3.fromRGB(255, 215, 80))
+	end)
+
+	-- Player level-up (issue #17); the HUD itself is refreshed by PlayerDataUpdated
+	Network.OnClientEvent("PlayerLevelUp", function(data: any)
+		if typeof(data) ~= "table" or typeof(data.NewLevel) ~= "number" then return end
+		self:ShowNotification(string.format("⭐ Level up! You are now level %d", data.NewLevel), Color3.fromRGB(120, 200, 60))
 	end)
 
 	Network.OnClientEvent("QuestCompleted", function(quest: Types.QuestDefinition)
@@ -874,7 +881,14 @@ end
 function UIController:UpdateHUD(coins: number, gems: number, level: number, xp: number)
 	if self.CoinLabel then self.CoinLabel.Text = string.format("🪙 %d", coins) end
 	if self.GemLabel then self.GemLabel.Text = string.format("💎 %d", gems) end
-	if self.LevelLabel then self.LevelLabel.Text = string.format("⭐ Lv. %d", level) end
+	if self.LevelLabel then
+		local xpToNext = ProgressionMath.GetXPToNextLevel(level)
+		if xpToNext > 0 then
+			self.LevelLabel.Text = string.format("⭐ Lv. %d · %d/%d XP", level, xp, xpToNext)
+		else
+			self.LevelLabel.Text = string.format("⭐ Lv. %d (MAX)", level)
+		end
+	end
 end
 
 function UIController:ShowNotification(text: string, color: Color3?)

@@ -172,6 +172,19 @@ local Config = {
 		},
 	} :: { Types.DecorationConfig },
 
+	-- Player progression curve (issue #17), used by ProgressionMath / PlayerDataService:AddPlayerXP.
+	-- XP to go from level L to L+1 = BASE_XP_TO_LEVEL_UP + XP_INCREMENT_PER_LEVEL * (L - 1)
+	--   L1->2: 120, L2->3: 180, L3->4: 240, L4->5: 300  =>  cumulative: Lv2 120, Lv3 300, Lv4 540, Lv5 840.
+	-- Rationale (rewards: victory 50 XP, defeat 15 XP, quests 50/75/100 XP once each):
+	--   * level 2 (plot 3) after 2-3 victories (100-150 XP), or 1 victory + a quest;
+	--   * level 5 (plot 5) after ~12 victories plus the 3 starter quests (840 - 225 = 615 XP), i.e. one
+	--     reasonable play session; a linear increment keeps later levels slower without a steep wall.
+	PROGRESSION = {
+		BASE_XP_TO_LEVEL_UP = 120,
+		XP_INCREMENT_PER_LEVEL = 60,
+		MAX_LEVEL = 50, -- At max level the XP stays at 0 (further gains are discarded)
+	},
+
 	-- Logging config
 	LOG_LEVEL = "INFO", -- "DEBUG" | "INFO" | "WARN" | "ERROR"
 }

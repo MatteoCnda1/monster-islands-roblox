@@ -100,9 +100,6 @@ function QuestService:CompleteQuest(player: Player, questId: string): boolean
 			return
 		end
 		profile.CompletedQuests[questId] = os.time()
-		if quest.RewardXP > 0 then
-			profile.Progression.XP += quest.RewardXP
-		end
 		newlyCompleted = true
 	end)
 
@@ -116,6 +113,10 @@ function QuestService:CompleteQuest(player: Player, questId: string): boolean
 	end
 	if quest.RewardGems > 0 then
 		EconomyService:AddGems(player, quest.RewardGems, "Quest: " .. quest.Title)
+	end
+	if quest.RewardXP > 0 then
+		-- Single XP entry point: applies level-ups and notifies the client (issue #17)
+		PlayerDataService:AddPlayerXP(player, quest.RewardXP, "Quest: " .. quest.Title)
 	end
 
 	Network.FireClient("QuestCompleted", player, quest)

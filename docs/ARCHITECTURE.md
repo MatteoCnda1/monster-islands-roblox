@@ -2,7 +2,10 @@
 
 ## 1. Vue d'Ensemble des Composants
 
-L'architecture repose sur le découpage standard moderne Roblox / Luau, synchronisé via **Rojo**.
+L'architecture repose sur le découpage standard moderne Roblox / Luau, synchronisé via **Rojo**
+(`default.project.json` : `src/shared` → `ReplicatedStorage.Shared`, `src/server` → `ServerScriptService.Server`,
+`src/client` → `StarterPlayer.StarterPlayerScripts.Client`). Le second arbre ci-dessous n'existe pas dans le projet
+Rojo : ces instances sont créées par le code au lancement.
 
 ```text
 Game Container (DataModel)
@@ -17,11 +20,11 @@ Game Container (DataModel)
 │       └── Utility/
 │           ├── Logger.luau             -- Journalisation structurée avec tags
 │           ├── Signal.luau             -- Événements Luau haute performance
-│           └── Network.luau            -- Registre et validation des remotes
+│           └── Network.luau            -- Surcouche des remotes (création paresseuse, aucune validation)
 │
 ├── ServerScriptService
 │   └── Server/
-│       ├── ServerBootstrap.server.luau -- Point d'entrée serveur (initialisation)
+│       ├── ServerBootstrap.server.luau -- Point d'entrée : génère la carte, puis Init/Start des services
 │       └── Services/
 │           ├── PlayerDataService.luau  -- Abstraction DataStore, sessions et profils
 │           ├── EconomyService.luau     -- Gestion des devises (Coins, Gems)
@@ -29,29 +32,59 @@ Game Container (DataModel)
 │           ├── MonsterService.luau     -- Instanciation, stats et inventaire de monstres
 │           ├── BreedingService.luau    -- Reproduction, hérédité et incubations
 │           ├── CombatService.luau      -- Moteur de combat tour par tour
-│           ├── MatchmakingService.luau -- Files d'attente PvP et création d'instances
+│           ├── MatchmakingService.luau -- File d'attente PvP, appariement puis CombatService:CreateBattle
 │           ├── InventoryService.luau   -- Gestion des objets, potions et consommables
 │           └── QuestService.luau       -- Suivi et complétion des quêtes
 │
 └── StarterPlayer
     └── StarterPlayerScripts
         └── Client/
-            ├── ClientBootstrap.client.luau -- Point d'entrée client
+            ├── ClientBootstrap.client.luau -- Point d'entrée client : Init/Start des controllers
             └── Controllers/
-                ├── UIController.luau       -- Gestion du HUD, fenêtres modales et menus
-                ├── MonsterController.luau  -- Visualisation 3D et interactions monstres
-                ├── PlotController.luau     -- Interactions visuelles parcelles & achat
-                ├── CombatController.luau    -- Interface et animations du combat
-                └── CameraController.luau    -- Transitions caméras (exploration, arène)
+                ├── UIController.luau       -- Construit toute l'UI en code (HUD, onglets, achats, breeding, décoration)
+                ├── CombatController.luau   -- Interface, dégâts flottants et VFX du combat ; pilote CameraController
+                ├── PlotController.luau     -- Quasi vide : demande au serveur de rafraîchir parcelles et œufs
+                ├── MonsterController.luau  -- Quasi vide : demande au serveur le rendu des monstres placés
+                └── CameraController.luau   -- Caméra cinématique (focus sur une position, arène de combat)
+
+Instances créées au lancement (runtime, côté serveur, répliquées aux clients)
+├── ReplicatedStorage.Remotes/   -- RemoteEvent / RemoteFunction créés à la demande par Network (cf. §4)
+└── Workspace/
+    ├── WorldMap/                -- Île, chemins, sanctuaire de breeding, arène PvP (ServerBootstrap)
+    ├── Plots/                   -- Socles des parcelles et décorations (PlotService)
+    ├── PlacedMonsters/          -- Modèles 3D des monstres placés (MonsterService)
+    ├── BreedingEggs/            -- Œufs en incubation (BreedingService)
+    └── ActiveBattleArenas/      -- Monstres des combats en cours, un dossier Battle_<id> par combat (CombatService)
 ```
+
+Les modèles 3D (monstres, œufs, décorations) sont construits en code par les services serveur ; aucun asset importé n'est utilisé.
 
 ---
 
 ## 2. Cycle de Vie des Modules (Lifecycle)
 
-Chaque service côté serveur et contrôleur côté client implémente deux méthodes standard :
-1. `:Init()` : Déclare les récepteurs réseau, alloue la mémoire et prépare les structures de données internes. Aucun service ne doit dépendre de l'initialisation complète d'un autre service pendant cette phase.
-2. `:Start()` : Se lance une fois tous les services initialisés. Peut appeler d'autres services, démarrer des écoutes d'événements et des boucles périodiques.
+Il n'y a pas de framework ni de découverte automatique : chaque bootstrap requiert explicitement ses modules et
+les range dans une **liste ordonnée**, puis appelle `:Init()` sur tous, puis `:Start()` sur tous (chaque méthode est
+optionnelle, testée par `typeof(x.Init) == "function"`).
+
+- **Serveur** (`ServerBootstrap.server.luau`) : génère d'abord la carte (`Workspace.WorldMap`), puis traite les
+  services dans cet ordre : `PlayerDataService`, `EconomyService`, `MonsterService`, `PlotService`,
+  `BreedingService`, `CombatService`, `MatchmakingService`, `InventoryService`, `QuestService`.
+- **Client** (`ClientBootstrap.client.luau`) : `UIController`, `CombatController`, `PlotController`,
+  `MonsterController`, `CameraController`.
+- **Un nouveau service/controller doit être ajouté à cette liste**, sinon il n'est jamais initialisé.
+- Les appels sont directs et séquentiels, sans `pcall` : une erreur dans un `Init()`/`Start()` interrompt le
+  bootstrap et les modules suivants ne sont pas initialisés. Un `Start()` qui boucle doit le faire dans `task.spawn`.
+
+Rôle de chaque phase :
+1. `:Init()` : résout les dépendances vers les autres services (`PlayerDataService = require(script.Parent.PlayerDataService)`
+   sur une variable locale déclarée en haut du module, pour éviter les `require` circulaires), crée les dossiers
+   `Workspace` du service et enregistre la plupart des remotes. Un service ne doit pas appeler les méthodes d'un autre
+   service pendant cette phase : l'ordre de la liste ne garantit pas que celui-ci soit prêt.
+2. `:Start()` : se lance une fois tous les modules initialisés. Connecte `Players.PlayerAdded` / `PlayerRemoving`,
+   démarre les boucles périodiques (`task.spawn`) et les `ProximityPrompt`. Quelques remotes de rafraîchissement
+   (`HandleEvent`) y sont aussi enregistrés ; les deux emplacements fonctionnent car tout le bootstrap serveur
+   s'exécute au démarrage de l'instance.
 
 ---
 
@@ -65,26 +98,110 @@ Pour garantir l'intégrité des profils sans écriture conflictuelle :
 
 ---
 
-## 4. Communication Réseau (Sécurisée)
+## 4. Communication Réseau
 
-Toutes les requêtes client passent par un gestionnaire centralisé :
-```lua
-Network.Request("PurchasePlot", { PlotId = 2 })
-```
+Tous les échanges client ↔ serveur passent par `src/shared/Utility/Network.luau`, une **fine surcouche** aux
+`RemoteEvent` / `RemoteFunction` de Roblox. Elle ne fait que créer/retrouver les remotes et y brancher les
+callbacks : **elle ne valide rien et ne limite pas le débit** (voir 4.4).
 
-Côté serveur :
+### 4.1 Remotes nommés par chaîne, créés à la demande
+
+- Il n'y a pas de registre déclaratif des remotes : chacun est désigné par **son nom (string)** à chaque appel.
+  Ce nom est un contrat implicite entre client et serveur ; une faute de frappe ne produit aucune erreur à la
+  compilation. Pour vérifier qu'un remote est branché des deux côtés : `grep -rn '"NomDuRemote"' src`.
+- Les instances vivent dans **`ReplicatedStorage.Remotes`** (dossier créé par le serveur au premier `require`
+  de `Network`).
+- **Création paresseuse** : côté serveur, le premier appel de l'API avec un nom donné crée le `RemoteEvent` ou la
+  `RemoteFunction` correspondant. Côté client, le module attend l'instance (`WaitForChild(name, 10)`) ; si le
+  serveur ne l'a pas créée sous 10 s, l'appel échoue. Un remote n'existe donc côté client que si le serveur l'a
+  enregistré ou utilisé au moins une fois.
+- Les instances sont mises en cache par nom dans le module (une table pour les events, une pour les functions).
+
+### 4.2 API exposée
+
+Chaque fonction vérifie par `assert` qu'elle est appelée du bon côté.
+
+| Côté | Fonction | Remote | Comportement |
+|---|---|---|---|
+| Serveur | `Network.HandleFunction(name, handler)` | `RemoteFunction` | Affecte `OnServerInvoke = handler` : un seul handler par nom, le dernier enregistré gagne. |
+| Serveur | `Network.HandleEvent(name, handler)` | `RemoteEvent` | Connecte `handler` à `OnServerEvent` (plusieurs handlers possibles). |
+| Serveur | `Network.FireClient(name, player, ...)` | `RemoteEvent` | Envoie un événement à un joueur. |
+| Serveur | `Network.FireAllClients(name, ...)` | `RemoteEvent` | Diffuse un événement à tous les joueurs. |
+| Client | `Network.InvokeServer(name, ...)` | `RemoteFunction` | Appel bloquant (yield) jusqu'à la réponse du handler serveur. |
+| Client | `Network.FireServer(name, ...)` | `RemoteEvent` | Envoi sans réponse. |
+| Client | `Network.OnClientEvent(name, handler)` | `RemoteEvent` | Connecte `handler` et renvoie la connexion. |
+
+Les handlers serveur reçoivent `player: Player` en premier argument : il est injecté par Roblox et constitue la
+**seule donnée fiable** de la requête. Tous les autres arguments sont contrôlés par le client.
+
+### 4.3 Conventions
+
+**Retour des `HandleFunction`.** Les actions qui modifient l'état renvoient `(success: boolean, errOrPayload)` :
+`true` suivi d'un payload éventuel, ou `false` suivi d'un message d'erreur affichable. Les fonctions de lecture
+(`GetPlayerData`, `GetPlayerMonsters`, `GetInventory`, `GetBalance`, `GetActiveQuests`) font exception et renvoient
+directement la donnée (ou `nil` / `{}` si le profil n'est pas chargé).
+
+**Validation par handler.** Chaque handler valide lui-même la forme des arguments avec `typeof(...)` avant de
+déléguer à une méthode du service, qui porte les contrôles métier (profil chargé, propriété du monstre ou de la
+parcelle, solde suffisant, état du combat…). Exemple réel (`PlotService:Init`) :
+
 ```lua
-Network.Handle("PurchasePlot", function(player: Player, payload: any)
-    assert(typeof(payload.PlotId) == "number", "Invalid PlotId format")
-    return PlotService:PurchasePlot(player, payload.PlotId)
+Network.HandleFunction("RequestPurchasePlot", function(player: Player, plotId: any)
+	if typeof(plotId) ~= "number" then
+		return false, "Invalid Plot ID"
+	end
+	return self:PurchasePlot(player, math.floor(plotId))
+end)
+
+Network.HandleFunction("PlaceMonsterOnPlot", function(player: Player, payload: any)
+	if typeof(payload) ~= "table" or typeof(payload.PlotId) ~= "number" or typeof(payload.MonsterUUID) ~= "string" then
+		return false, "Invalid placement parameters"
+	end
+	return self:PlaceMonster(player, payload.PlotId, payload.MonsterUUID)
 end)
 ```
-- Le serveur ne fait confiance à aucune valeur sensible provenant du client.
-- Débit limité par joueur (Rate Limiter anti-flood).
+
+Et côté client (`UIController`) :
+
+```lua
+local success, err = Network.InvokeServer("RequestPurchasePlot", plotConfig.Id)
+```
+
+Règles à respecter pour tout nouveau remote :
+- typer chaque argument reçu en `any` et le vérifier avec `typeof` avant usage, y compris les champs d'une table ;
+- ne jamais recevoir du client une valeur que le serveur peut calculer (prix, dégâts, récompenses, stats) ;
+- en cas d'échec, renvoyer `false, "message"` plutôt que lever une erreur (`assert`/`error` dans un handler
+  remonte une erreur à l'appelant et pollue les logs serveur) ;
+- après une mutation via `PlayerDataService:UpdateProfile`, le profil complet est renvoyé automatiquement au client
+  par `PlayerDataUpdated` : inutile d'ajouter un remote dédié pour resynchroniser l'UI.
+
+### 4.4 Limites actuelles (non implémenté)
+
+- **Aucun limiteur de débit** : un client peut appeler n'importe quel remote en boucle. Les plus exposés sont ceux
+  qui coûtent cher côté serveur (`GetPlayerData` renvoie le profil complet, `RequestRenderPlacedMonsters` reconstruit
+  des modèles 3D, `SubmitBattleAction` peut déclencher la résolution d'un tour). Un limiteur par joueur et par remote
+  branché dans `Network.HandleFunction` / `HandleEvent` est **envisagé** mais pas décidé (issue #22).
+- **Aucune validation centralisée** (schéma de payload, bornes numériques, taille des tables, NaN) : la validation
+  se limite aux tests `typeof` écrits dans chaque handler, et leur profondeur varie d'un remote à l'autre.
+- Ni cooldown par action, ni vérification de distance pour les interactions monde déclenchées par remote, bien que
+  `CONTRIBUTING.md` les recommande (les `ProximityPrompt` bénéficient en revanche de la distance d'activation
+  gérée par Roblox).
 
 ---
 
 ## 5. Extensibilité & Data-Driven Design
 
-L'ensemble des mécaniques (monstres, compétences, formules de dégâts, coûts de parcelles) est extrait dans des modules `Definitions` ou `Config`.
-Ajouter un nouveau monstre ou équilibrer un élément ne requiert aucune modification dans la logique des services centraux.
+Les données d'équilibrage sont extraites dans `src/shared` : espèces et calcul des stats (`MonsterDefinitions`),
+compétences (`AttackDefinitions`), matrice d'efficacité élémentaire (`ElementDefinitions`), parcelles, monnaies de
+départ, catalogue de décorations et constantes diverses (`Config`). Les types partagés sont centralisés dans
+`Types.luau`. Équilibrer une valeur existante ne demande donc pas de toucher aux services.
+
+Ajouter un contenu nouveau demande en revanche encore du code dans les services :
+- les traits distinctifs du modèle 3D d'une espèce (oreilles, nageoires…) sont codés par identifiant dans
+  `MonsterService` (une nouvelle espèce sans branche dédiée n'a que le corps générique) ;
+- la géométrie de chaque décoration est codée par identifiant dans `PlotService` ;
+- les espèces des adversaires bot sont listées dans `CombatService` ;
+- les quêtes sont définies dans `QuestService`, pas dans un module de définitions.
+
+Les tests (`tests/run_tests.luau`) recopient les formules au lieu d'importer `src/` : une formule modifiée dans
+`src/shared` doit aussi être mise à jour dans les tests.

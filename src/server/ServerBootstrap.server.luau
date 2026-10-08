@@ -5,6 +5,8 @@ local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Logger = require(ReplicatedStorage.Shared.Utility.Logger)
+local Config = require(ReplicatedStorage.Shared.Config)
+local PlotSlots = require(ReplicatedStorage.Shared.PlotSlots)
 
 -- Procedural Starter Map Generator (Generates the 3D playable island directly in Workspace)
 local function buildStarterWorld()
@@ -217,6 +219,54 @@ local function buildStarterWorld()
 	aLabel.Parent = arenaSign
 
 	battleArena.Parent = mapFolder
+
+	-- 6. Player plot islands: one annex island per slot, linked to the village by a bridge.
+	-- PlotService assigns a slot to each player and builds their plots on it (issue #21).
+	local islandsFolder = Instance.new("Folder")
+	islandsFolder.Name = "PlotIslands"
+
+	local islandSize = Config.PLOT_SLOTS.ISLAND_SIZE
+	for slotIndex = 1, PlotSlots.GetSlotCount() do
+		local origin = PlotSlots.GetOrigin(slotIndex)
+
+		local island = Instance.new("Part")
+		island.Name = "PlotIsland_" .. tostring(slotIndex)
+		island.Size = islandSize
+		island.Position = origin
+		island.Anchored = true
+		island.Material = Enum.Material.Grass
+		island.Color = Color3.fromRGB(75, 155, 70)
+		island.TopSurface = Enum.SurfaceType.Smooth
+		island.BottomSurface = Enum.SurfaceType.Smooth
+		island.Parent = islandsFolder
+
+		local islandSand = Instance.new("Part")
+		islandSand.Name = "PlotIslandBeach_" .. tostring(slotIndex)
+		islandSand.Size = Vector3.new(islandSize.X + 10, 2, islandSize.Z + 10)
+		islandSand.Position = origin + Vector3.new(0, -1, 0)
+		islandSand.Anchored = true
+		islandSand.Material = Enum.Material.Sand
+		islandSand.Color = Color3.fromRGB(225, 205, 145)
+		islandSand.TopSurface = Enum.SurfaceType.Smooth
+		islandSand.BottomSurface = Enum.SurfaceType.Smooth
+		islandSand.Parent = islandsFolder
+
+		local bridgeStart, bridgeEnd = PlotSlots.GetBridgeEndpoints(slotIndex)
+		local bridgeLength = (bridgeEnd - bridgeStart).Magnitude
+		local bridgeMid = (bridgeStart + bridgeEnd) / 2 + Vector3.new(0, 2, 0) -- Top at y = 2.5 (hub paths: 2.4)
+		local bridge = Instance.new("Part")
+		bridge.Name = "PlotBridge_" .. tostring(slotIndex)
+		bridge.Size = Vector3.new(Config.PLOT_SLOTS.BRIDGE_WIDTH, 1, bridgeLength)
+		bridge.CFrame = CFrame.lookAt(bridgeMid, bridgeMid + (bridgeEnd - bridgeStart))
+		bridge.Anchored = true
+		bridge.Material = Enum.Material.WoodPlanks
+		bridge.Color = Color3.fromRGB(150, 105, 60)
+		bridge.TopSurface = Enum.SurfaceType.Smooth
+		bridge.BottomSurface = Enum.SurfaceType.Smooth
+		bridge.Parent = islandsFolder
+	end
+
+	islandsFolder.Parent = mapFolder
 
 	Logger:Info("MAP", "Starter 3D world geometry generated successfully.")
 end

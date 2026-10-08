@@ -1,4 +1,5 @@
 --!strict
+local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -9,15 +10,30 @@ local Config = require(ReplicatedStorage.Shared.Config)
 local Logger = require(ReplicatedStorage.Shared.Utility.Logger)
 local Network = require(ReplicatedStorage.Shared.Utility.Network)
 local PlotMath = require(ReplicatedStorage.Shared.PlotMath)
+local PlotSlots = require(ReplicatedStorage.Shared.PlotSlots)
 local Signal = require(ReplicatedStorage.Shared.Utility.Signal)
 
 local PlayerDataService: any = nil
 local EconomyService: any = nil
 local MonsterService: any = nil
 
+local PROFILE_WAIT_TIMEOUT_SECONDS = 30
+local OWNER_SIGN_LOCAL_POSITION = Vector3.new(-12, 2, 19)
+
+-- One island slot per player (issue #21). Everything built for a player lives in `Folder`
+-- (Workspace.Plots.Slot_<n>) and is destroyed when the slot is released.
+type PlayerSlot = {
+	Index: number,
+	Owner: Player,
+	Folder: Folder,
+	DecorationsFolder: Folder,
+	PlotModels: { [number]: Model }, -- Keyed by PlotId
+	DecorationModels: { [string]: Model }, -- Keyed by DecorationUUID
+}
+
 local plotsFolder: Folder
-local physicalPlotModels: { [number]: Model } = {}
-local physicalDecorationModels: { [string]: Model } = {} -- Keyed by DecorationUUID
+local slotsByIndex: { [number]: PlayerSlot } = {}
+local slotsByPlayer: { [Player]: PlayerSlot } = {}
 
 local PlotService = {}
 
@@ -34,15 +50,17 @@ local function createPhysicalPlotsFolder(): Folder
 	return folder
 end
 
-local function spawnPlotGeometry(plotConfig: Types.PlotConfig): Model
+local function spawnPlotGeometry(plotConfig: Types.PlotConfig, worldPosition: Vector3, parent: Instance): Model
 	local plotModel = Instance.new("Model")
 	plotModel.Name = "Plot_" .. tostring(plotConfig.Id)
+	plotModel:SetAttribute("PlotId", plotConfig.Id)
+	plotModel:SetAttribute("IsUnlocked", false)
 
 	-- Base ground pad
 	local basePad = Instance.new("Part")
 	basePad.Name = "BasePad"
 	basePad.Size = plotConfig.Size
-	basePad.Position = plotConfig.WorldPosition
+	basePad.Position = worldPosition
 	basePad.Anchored = true
 	basePad.Material = Enum.Material.Grass
 	basePad.Color = Color3.fromRGB(80, 160, 75)
@@ -66,7 +84,7 @@ local function spawnPlotGeometry(plotConfig: Types.PlotConfig): Model
 		local pillar = Instance.new("Part")
 		pillar.Name = "Pillar_" .. tostring(i)
 		pillar.Size = Vector3.new(2, 4, 2)
-		pillar.Position = plotConfig.WorldPosition + offset
+		pillar.Position = worldPosition + offset
 		pillar.Anchored = true
 		pillar.Material = Enum.Material.Slate
 		pillar.Color = Color3.fromRGB(120, 120, 130)
@@ -77,7 +95,7 @@ local function spawnPlotGeometry(plotConfig: Types.PlotConfig): Model
 	local podium = Instance.new("Part")
 	podium.Name = "SignPodium"
 	podium.Size = Vector3.new(3, 3, 3)
-	podium.Position = plotConfig.WorldPosition + Vector3.new(0, (plotConfig.Size.Y / 2) + 1.5, -halfZ + 3)
+	podium.Position = worldPosition + Vector3.new(0, (plotConfig.Size.Y / 2) + 1.5, -halfZ + 3)
 	podium.Anchored = true
 	podium.Material = Enum.Material.WoodPlanks
 	podium.Color = Color3.fromRGB(140, 90, 50)
@@ -113,17 +131,68 @@ local function spawnPlotGeometry(plotConfig: Types.PlotConfig): Model
 	statusLabel.Font = Enum.Font.GothamMedium
 	statusLabel.Parent = billboard
 
-	-- Proximity Prompt for interaction/purchase
-	local prompt = Instance.new("ProximityPrompt")
-	prompt.Name = "PlotPrompt"
-	prompt.ActionText = "Unlock Plot"
-	prompt.ObjectText = plotConfig.Name
-	prompt.HoldDuration = 0.5
-	prompt.MaxActivationDistance = 12
-	prompt.Parent = podium
+	-- No ProximityPrompt here: the purchase prompt is created client-side by PlotController,
+	-- only on the local player's own plots, and goes through the "RequestPurchasePlot" remote.
 
-	plotModel.Parent = plotsFolder
+	plotModel.Parent = parent
 	return plotModel
+end
+
+local function spawnOwnerSign(slotIndex: number, owner: Player, parent: Instance)
+	local post = Instance.new("Part")
+	post.Name = "OwnerSign"
+	post.Size = Vector3.new(1.5, 8, 1.5)
+	post.Position = PlotSlots.ToWorldPosition(slotIndex, OWNER_SIGN_LOCAL_POSITION) + Vector3.new(0, 4, 0)
+	post.Anchored = true
+	post.Material = Enum.Material.Wood
+	post.Color = Color3.fromRGB(110, 75, 40)
+	post.Parent = parent
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "OwnerBillboard"
+	billboard.Size = UDim2.new(0, 240, 0, 50)
+	billboard.StudsOffset = Vector3.new(0, 6, 0)
+	billboard.AlwaysOnTop = true
+	billboard.MaxDistance = 200
+	billboard.Parent = post
+
+	local label = Instance.new("TextLabel")
+	label.Name = "OwnerLabel"
+	label.Size = UDim2.new(1, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.Text = string.format("%s's Island", owner.DisplayName)
+	label.TextColor3 = Color3.fromRGB(255, 230, 120)
+	label.TextStrokeTransparency = 0.4
+	label.TextScaled = true
+	label.Font = Enum.Font.GothamBold
+	label.Parent = billboard
+end
+
+-- Yields until the player's profile is loaded (DataStore read can be slow) or the player leaves
+local function waitForProfile(player: Player): Types.PlayerData?
+	local deadline = os.clock() + PROFILE_WAIT_TIMEOUT_SECONDS
+	while player.Parent == Players and os.clock() < deadline do
+		local profile = PlayerDataService:GetProfile(player)
+		if profile then
+			return profile
+		end
+		task.wait(0.25)
+	end
+	return nil
+end
+
+local function teleportToIsland(player: Player, slot: PlayerSlot, character: Model)
+	local rootPart = character:WaitForChild("HumanoidRootPart", 10)
+	if not rootPart or slotsByPlayer[player] ~= slot then return end
+	task.wait() -- Let the default spawn placement happen first
+
+	local target = PlotSlots.ToWorldPosition(slot.Index, Config.PLOT_SLOTS.SPAWN_LOCAL_POSITION)
+	pcall(function()
+		player:RequestStreamAroundAsync(target, 5)
+	end)
+	if character.Parent and slotsByPlayer[player] == slot then
+		character:PivotTo(CFrame.new(target))
+	end
 end
 
 function PlotService:Init()
@@ -134,10 +203,8 @@ function PlotService:Init()
 
 	plotsFolder = createPhysicalPlotsFolder()
 
-	-- Generate physical geometry for all configured plots
-	for _, plotConfig in ipairs(Config.PLOTS) do
-		local model = spawnPlotGeometry(plotConfig)
-		physicalPlotModels[plotConfig.Id] = model
+	if Players.MaxPlayers > PlotSlots.GetSlotCount() then
+		Logger:Warn("PLOT", "Max Players (%d) exceeds island slots (%d): extra players will wait for a free island", Players.MaxPlayers, PlotSlots.GetSlotCount())
 	end
 
 	-- Handle purchase request via network
@@ -174,27 +241,148 @@ function PlotService:Init()
 end
 
 function PlotService:Start()
-	-- Connect proximity prompts
-	for plotId, model in pairs(physicalPlotModels) do
-		local podium = model:FindFirstChild("SignPodium")
-		if podium then
-			local prompt = podium:FindFirstChild("PlotPrompt") :: ProximityPrompt
-			if prompt then
-				prompt.Triggered:Connect(function(player)
-					local success, err = self:PurchasePlot(player, plotId)
-					if not success and err then
-						Logger:Info("PLOT", "Prompt purchase attempt by %s for Plot %d failed: %s", player.Name, plotId, err)
-					end
-				end)
-			end
-		end
+	-- Per-player islands: assigned on join, released (and handed to a waiting player) on leave
+	Players.PlayerAdded:Connect(function(player)
+		self:AssignSlot(player, true)
+	end)
+
+	Players.PlayerRemoving:Connect(function(player)
+		self:ReleaseSlot(player)
+	end)
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		self:AssignSlot(player, true)
 	end
 
-	-- Listen for profile loads to refresh plot appearance
+	-- Client refresh request (idempotent: the server also refreshes once the profile is loaded)
 	Network.HandleEvent("RefreshPlotsRequest", function(player: Player)
 		self:UpdateClientPlotVisuals(player)
 		self:RenderPlayerDecorations(player)
 	end)
+end
+
+-- Gives the player a free island slot and builds their plots on it. Returns the slot index,
+-- or nil when every island is taken (the player gets one as soon as somebody leaves).
+function PlotService:AssignSlot(player: Player, teleportOnSpawn: boolean): number?
+	local existing = slotsByPlayer[player]
+	if existing then
+		return existing.Index
+	end
+	if player.Parent ~= Players then
+		return nil
+	end
+
+	local maxSlots = PlotSlots.GetSlotCount()
+	local slotIndex = PlotSlots.FindFreeSlot(slotsByIndex, maxSlots)
+	if not slotIndex then
+		Logger:Warn("PLOT", "No free island for player %s (%d/%d taken), waiting for one to free up", player.Name, maxSlots, maxSlots)
+		task.spawn(function()
+			waitForProfile(player)
+			if player.Parent == Players and not slotsByPlayer[player] then
+				local payload: Types.PlotSlotAssignment = { SlotIndex = nil, Origin = nil, MaxSlots = maxSlots }
+				Network.FireClient("PlotSlotAssigned", player, payload)
+			end
+		end)
+		return nil
+	end
+
+	local folder = Instance.new("Folder")
+	folder.Name = "Slot_" .. tostring(slotIndex)
+	folder:SetAttribute("SlotIndex", slotIndex)
+	folder:SetAttribute("OwnerUserId", player.UserId)
+	folder:SetAttribute("OwnerName", player.Name)
+
+	local decorationsFolder = Instance.new("Folder")
+	decorationsFolder.Name = "Decorations"
+	decorationsFolder.Parent = folder
+
+	local slot: PlayerSlot = {
+		Index = slotIndex,
+		Owner = player,
+		Folder = folder,
+		DecorationsFolder = decorationsFolder,
+		PlotModels = {},
+		DecorationModels = {},
+	}
+
+	for _, plotConfig in ipairs(Config.PLOTS) do
+		local worldPosition = PlotSlots.GetPlotWorldPosition(slotIndex, plotConfig)
+		slot.PlotModels[plotConfig.Id] = spawnPlotGeometry(plotConfig, worldPosition, folder)
+	end
+	spawnOwnerSign(slotIndex, player, folder)
+
+	slotsByIndex[slotIndex] = slot
+	slotsByPlayer[player] = slot
+	folder.Parent = plotsFolder -- Replicates the whole island content at once
+	Logger:Info("PLOT", "Assigned island slot %d to player %s", slotIndex, player.Name)
+
+	if teleportOnSpawn and Config.PLOT_SLOTS.TELEPORT_ON_FIRST_SPAWN then
+		if player.Character then
+			task.spawn(teleportToIsland, player, slot, player.Character)
+		else
+			player.CharacterAdded:Once(function(character)
+				teleportToIsland(player, slot, character)
+			end)
+		end
+	end
+
+	-- Render the player's plot state, decorations and monsters once their profile is available
+	task.spawn(function()
+		local profile = waitForProfile(player)
+		if slotsByPlayer[player] ~= slot then return end
+		if profile then
+			self:UpdateClientPlotVisuals(player)
+			self:RenderPlayerDecorations(player)
+			MonsterService:RenderPlacedMonsters(player)
+		end
+		local payload: Types.PlotSlotAssignment = {
+			SlotIndex = slotIndex,
+			Origin = PlotSlots.GetOrigin(slotIndex),
+			MaxSlots = maxSlots,
+		}
+		Network.FireClient("PlotSlotAssigned", player, payload)
+	end)
+
+	return slotIndex
+end
+
+-- Destroys everything built for the player (plots, owner sign, decorations, placed monsters)
+-- and frees the slot. Profile data is untouched: it is rebuilt on the next join.
+function PlotService:ReleaseSlot(player: Player)
+	local slot = slotsByPlayer[player]
+	if not slot then return end
+
+	slotsByPlayer[player] = nil
+	slotsByIndex[slot.Index] = nil
+
+	MonsterService:UnrenderAllForPlayer(player)
+	slot.Folder:Destroy()
+	table.clear(slot.PlotModels)
+	table.clear(slot.DecorationModels)
+	Logger:Info("PLOT", "Released island slot %d of player %s", slot.Index, player.Name)
+
+	-- Hand the freed island to a player who joined while the server was full
+	for _, waitingPlayer in ipairs(Players:GetPlayers()) do
+		if waitingPlayer ~= player and not slotsByPlayer[waitingPlayer] then
+			self:AssignSlot(waitingPlayer, false)
+			break
+		end
+	end
+end
+
+function PlotService:GetPlayerSlotIndex(player: Player): number?
+	local slot = slotsByPlayer[player]
+	return slot and slot.Index or nil
+end
+
+-- World position of a plot's center on the player's island, or nil if the player has no island
+function PlotService:GetPlotWorldPosition(player: Player, plotId: number): Vector3?
+	local slot = slotsByPlayer[player]
+	local plotConfig = self:GetPlotConfig(plotId)
+	if not slot or not plotConfig then
+		return nil
+	end
+	return PlotSlots.GetPlotWorldPosition(slot.Index, plotConfig)
 end
 
 function PlotService:GetPlotConfig(plotId: number): Types.PlotConfig?
@@ -335,19 +523,23 @@ end
 
 function PlotService:UpdateClientPlotVisuals(player: Player)
 	local profile = PlayerDataService:GetProfile(player)
-	if not profile then return end
+	local slot = slotsByPlayer[player]
+	if not profile or not slot then return end
 
-	for plotId, model in pairs(physicalPlotModels) do
+	-- Only touches the models of this player's own island
+	for plotId, model in pairs(slot.PlotModels) do
 		local plotKey = tostring(plotId)
 		local plotData = profile.Plots[plotKey]
-		local isUnlocked = plotData and plotData.IsUnlocked
+		local isUnlocked = plotData ~= nil and plotData.IsUnlocked
 		local config = self:GetPlotConfig(plotId)
 		if not config then continue end
+
+		-- Read by the owner's client (PlotController) to show/hide its purchase prompt
+		model:SetAttribute("IsUnlocked", isUnlocked)
 
 		local podium = model:FindFirstChild("SignPodium")
 		if podium then
 			local billboard = podium:FindFirstChild("PlotBillboard") :: BillboardGui
-			local prompt = podium:FindFirstChild("PlotPrompt") :: ProximityPrompt
 
 			if billboard then
 				local statusLabel = billboard:FindFirstChild("StatusLabel") :: TextLabel
@@ -359,13 +551,6 @@ function PlotService:UpdateClientPlotVisuals(player: Player)
 						statusLabel.Text = string.format("%d Coins", config.CostCoins)
 						statusLabel.TextColor3 = Color3.fromRGB(255, 215, 60)
 					end
-				end
-			end
-
-			if prompt then
-				prompt.Enabled = not isUnlocked
-				if not isUnlocked then
-					prompt.ActionText = string.format("Unlock (%d Coins)", config.CostCoins)
 				end
 			end
 		end
@@ -522,6 +707,21 @@ local function buildProceduralDecorationModel(config: Types.DecorationConfig, wo
 	return model
 end
 
+-- Builds a placed decoration on the owner's island (no-op if already built)
+local function spawnDecorationModel(
+	slot: PlayerSlot,
+	plotConfig: Types.PlotConfig,
+	decoConfig: Types.DecorationConfig,
+	placedDeco: Types.PlacedDecoration
+)
+	if slot.DecorationModels[placedDeco.UUID] then return end
+	local plotWorldPos = PlotSlots.GetPlotWorldPosition(slot.Index, plotConfig)
+	local worldPos = plotWorldPos + Vector3.new(placedDeco.PositionX, placedDeco.PositionY, placedDeco.PositionZ)
+	local model = buildProceduralDecorationModel(decoConfig, worldPos, placedDeco.RotationY or 0)
+	model.Parent = slot.DecorationsFolder
+	slot.DecorationModels[placedDeco.UUID] = model
+end
+
 function PlotService:PlaceDecoration(
 	player: Player,
 	plotId: number,
@@ -573,11 +773,11 @@ function PlotService:PlaceDecoration(
 		table.insert(p.PlacedDecorations, placedDeco)
 	end)
 
-	-- Spawn physical model in workspace
-	local worldPos = plotConfig.WorldPosition + Vector3.new(snappedX, (plotConfig.Size.Y / 2), snappedZ)
-	local model = buildProceduralDecorationModel(decoConfig, worldPos, rotationY)
-	model.Parent = plotsFolder
-	physicalDecorationModels[decoUUID] = model
+	-- Spawn physical model on the player's island (if they have none, it is built when they get one)
+	local slot = slotsByPlayer[player]
+	if slot then
+		spawnDecorationModel(slot, plotConfig, decoConfig, placedDeco)
+	end
 
 	Logger:Info("PLOT", "Player %s placed %s on Plot %d at (%d, %d)", player.Name, decoConfig.Name, plotId, snappedX, snappedZ)
 	Network.FireClient("DecorationPlaced", player, { PlotId = plotId, Decoration = placedDeco })
@@ -612,10 +812,11 @@ function PlotService:RemoveDecoration(player: Player, plotId: number, decoration
 	end)
 
 	-- Destroy 3D model
-	local model = physicalDecorationModels[decorationUUID]
-	if model then
+	local slot = slotsByPlayer[player]
+	local model = slot and slot.DecorationModels[decorationUUID]
+	if slot and model then
 		model:Destroy()
-		physicalDecorationModels[decorationUUID] = nil
+		slot.DecorationModels[decorationUUID] = nil
 	end
 
 	Logger:Info("PLOT", "Player %s removed decoration %s from Plot %d", player.Name, decorationUUID, plotId)
@@ -624,21 +825,17 @@ end
 
 function PlotService:RenderPlayerDecorations(player: Player)
 	local profile = PlayerDataService:GetProfile(player)
-	if not profile then return end
+	local slot = slotsByPlayer[player]
+	if not profile or not slot then return end
 
 	for plotKey, plotData in pairs(profile.Plots) do
 		local plotId = tonumber(plotKey) or plotData.Id
 		local plotConfig = self:GetPlotConfig(plotId)
 		if plotConfig and plotData.PlacedDecorations then
 			for _, placedDeco in ipairs(plotData.PlacedDecorations) do
-				if not physicalDecorationModels[placedDeco.UUID] then
-					local decoConfig = self:GetDecorationConfig(placedDeco.DecorationId)
-					if decoConfig then
-						local worldPos = plotConfig.WorldPosition + Vector3.new(placedDeco.PositionX, placedDeco.PositionY, placedDeco.PositionZ)
-						local model = buildProceduralDecorationModel(decoConfig, worldPos, placedDeco.RotationY or 0)
-						model.Parent = plotsFolder
-						physicalDecorationModels[placedDeco.UUID] = model
-					end
+				local decoConfig = self:GetDecorationConfig(placedDeco.DecorationId)
+				if decoConfig then
+					spawnDecorationModel(slot, plotConfig, decoConfig, placedDeco)
 				end
 			end
 		end

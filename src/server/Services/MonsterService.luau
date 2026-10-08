@@ -12,9 +12,10 @@ local ElementDefinitions = require(ReplicatedStorage.Shared.ElementDefinitions)
 local Network = require(ReplicatedStorage.Shared.Utility.Network)
 
 local PlayerDataService: any = nil
+local PlotService: any = nil
 
 local placedMonstersFolder: Folder
-local renderedMonsterModels: { [string]: Model } = {} -- Keyed by MonsterUUID
+local renderedMonsterModels: { [Player]: { [string]: Model } } = {} -- Per owner, keyed by MonsterUUID
 
 local MonsterService = {}
 
@@ -201,6 +202,7 @@ end
 function MonsterService:Init()
 	Logger:Info("MONSTER", "Initializing MonsterService...")
 	PlayerDataService = require(script.Parent.PlayerDataService)
+	PlotService = require(script.Parent.PlotService)
 	placedMonstersFolder = getPlacedMonstersFolder()
 
 	-- Remotes (monster list reaches the client through the full profile: GetPlayerData / PlayerDataUpdated)
@@ -211,17 +213,24 @@ function MonsterService:Init()
 end
 
 function MonsterService:Start()
-	-- Render existing placed monsters for joined players
+	-- Render existing placed monsters for joined players (idempotent: PlotService also renders
+	-- them once the player's island is assigned and their profile is loaded)
 	Network.HandleEvent("RequestRenderPlacedMonsters", function(player: Player)
-		local profile = PlayerDataService:GetProfile(player)
-		if not profile then return end
-
-		for uuid, monster in pairs(profile.Monsters) do
-			if monster.AssignedPlotId then
-				self:RenderMonsterOnPlot(player, uuid, monster.AssignedPlotId)
-			end
-		end
+		self:RenderPlacedMonsters(player)
 	end)
+end
+
+-- Renders every monster assigned to a plot that is not rendered yet, on the player's own island
+function MonsterService:RenderPlacedMonsters(player: Player)
+	local profile = PlayerDataService:GetProfile(player)
+	if not profile then return end
+
+	local rendered = renderedMonsterModels[player]
+	for uuid, monster in pairs(profile.Monsters) do
+		if monster.AssignedPlotId and not (rendered and rendered[uuid]) then
+			self:RenderMonsterOnPlot(player, uuid, monster.AssignedPlotId)
+		end
+	end
 end
 
 function MonsterService:CreateMonster(
@@ -332,27 +341,28 @@ function MonsterService:RenderMonsterOnPlot(player: Player, monsterUUID: string,
 	-- Unrender existing model if present
 	self:UnrenderMonsterFromPlot(player, monsterUUID)
 
-	local plotConfig: Types.PlotConfig? = nil
-	for _, cfg in ipairs(Config.PLOTS) do
-		if cfg.Id == plotId then
-			plotConfig = cfg
-			break
-		end
-	end
-	if not plotConfig then return end
+	local plotConfig: Types.PlotConfig? = PlotService:GetPlotConfig(plotId)
+	-- Plot center on the owner's island; nil if the player has no island (server full)
+	local plotWorldPos: Vector3? = PlotService:GetPlotWorldPosition(player, plotId)
+	if not plotConfig or not plotWorldPos then return end
 
 	local model = buildProceduralMonsterModel(monster, definition)
 	-- Offset position slightly within plot
 	local offsetX = (math.random() - 0.5) * (plotConfig.Size.X * 0.4)
 	local offsetZ = (math.random() - 0.5) * (plotConfig.Size.Z * 0.4)
-	local spawnPos = plotConfig.WorldPosition + Vector3.new(offsetX, (plotConfig.Size.Y / 2) + 2.5, offsetZ)
+	local spawnPos = plotWorldPos + Vector3.new(offsetX, (plotConfig.Size.Y / 2) + 2.5, offsetZ)
 
 	if model.PrimaryPart then
 		model:SetPrimaryPartCFrame(CFrame.new(spawnPos) * CFrame.Angles(0, math.rad(math.random(0, 360)), 0))
 	end
 
 	model.Parent = placedMonstersFolder
-	renderedMonsterModels[monsterUUID] = model
+	local rendered = renderedMonsterModels[player]
+	if not rendered then
+		rendered = {}
+		renderedMonsterModels[player] = rendered
+	end
+	rendered[monsterUUID] = model
 
 	-- Idle subtle hovering or breathing effect
 	task.spawn(function()
@@ -369,11 +379,22 @@ function MonsterService:RenderMonsterOnPlot(player: Player, monsterUUID: string,
 end
 
 function MonsterService:UnrenderMonsterFromPlot(player: Player, monsterUUID: string)
-	local existingModel = renderedMonsterModels[monsterUUID]
-	if existingModel then
+	local rendered = renderedMonsterModels[player]
+	local existingModel = rendered and rendered[monsterUUID]
+	if rendered and existingModel then
 		existingModel:Destroy()
-		renderedMonsterModels[monsterUUID] = nil
+		rendered[monsterUUID] = nil
 	end
+end
+
+-- Destroys every plot monster rendered for the player (called when their island is released)
+function MonsterService:UnrenderAllForPlayer(player: Player)
+	local rendered = renderedMonsterModels[player]
+	if not rendered then return end
+	for _, model in pairs(rendered) do
+		model:Destroy()
+	end
+	renderedMonsterModels[player] = nil
 end
 
 function MonsterService:BuildBattleMonsterModel(monster: Types.MonsterInstance): Model

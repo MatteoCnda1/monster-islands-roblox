@@ -9,6 +9,7 @@ local Types = require(ReplicatedStorage.Shared.Types)
 local Config = require(ReplicatedStorage.Shared.Config)
 local Logger = require(ReplicatedStorage.Shared.Utility.Logger)
 local MonsterDefinitions = require(ReplicatedStorage.Shared.MonsterDefinitions)
+local BreedingMath = require(ReplicatedStorage.Shared.BreedingMath)
 local Network = require(ReplicatedStorage.Shared.Utility.Network)
 
 local PlayerDataService: any = nil
@@ -28,12 +29,6 @@ local function getEggsFolder(): Folder
 	end
 	return folder
 end
-
--- Special rare mutation recipes
-local MUTATION_RECIPES: { [string]: string } = {
-	["emberfox+noctyra"] = "voidfox",
-	["noctyra+emberfox"] = "voidfox",
-}
 
 local function buildProceduralEggModel(
 	session: Types.BreedingSession,
@@ -143,72 +138,6 @@ local function buildProceduralEggModel(
 	end)
 
 	return model
-end
-
-local function inheritIVs(parentA: Types.MonsterInstance, parentB: Types.MonsterInstance): Types.MonsterIVs
-	local stats = { "Health", "Attack", "Defense", "Speed" }
-	local childIVs: any = {}
-
-	for _, statName in ipairs(stats) do
-		local valA = (parentA.IVs :: any)[statName] or 5
-		local valB = (parentB.IVs :: any)[statName] or 5
-		local avg = math.round((valA + valB) / 2)
-		local variance = math.random(-Config.BREEDING.GENETIC_VARIANCE_RANGE, Config.BREEDING.GENETIC_VARIANCE_RANGE)
-		local finalIV = math.clamp(avg + variance, 0, 15)
-
-		-- 2% chance for spontaneous maximum genetic potential
-		if math.random() <= 0.02 then
-			finalIV = 15
-		end
-
-		childIVs[statName] = finalIV
-	end
-
-	return childIVs :: Types.MonsterIVs
-end
-
-local function determineChildSpecies(parentA: Types.MonsterInstance, parentB: Types.MonsterInstance): string
-	local defA = MonsterDefinitions.Get(parentA.SpeciesId)
-	local defB = MonsterDefinitions.Get(parentB.SpeciesId)
-	if not defA or not defB then
-		return parentA.SpeciesId
-	end
-
-	-- Check for rare mutation recipe
-	local recipeKey = string.format("%s+%s", parentA.SpeciesId, parentB.SpeciesId)
-	local mutationTarget = MUTATION_RECIPES[recipeKey]
-	if mutationTarget and math.random() <= Config.BREEDING.BASE_MUTATION_CHANCE then
-		Logger:Info("BREEDING", "Discovery! Rare mutation recipe triggered: %s", mutationTarget)
-		return mutationTarget
-	end
-
-	-- 45% Parent A, 45% Parent B, 10% element-based alternative
-	local roll = math.random(1, 100)
-	if roll <= 45 then
-		return parentA.SpeciesId
-	elseif roll <= 90 then
-		return parentB.SpeciesId
-	else
-		-- Select a species sharing at least one element with parents
-		local parentElements: { [Types.ElementType]: boolean } = {}
-		for _, elem in ipairs(defA.Elements) do parentElements[elem] = true end
-		for _, elem in ipairs(defB.Elements) do parentElements[elem] = true end
-
-		local compatibleCandidates: { string } = {}
-		for spId, def in pairs(MonsterDefinitions.GetAll()) do
-			for _, elem in ipairs(def.Elements) do
-				if parentElements[elem] then
-					table.insert(compatibleCandidates, spId)
-					break
-				end
-			end
-		end
-
-		if #compatibleCandidates > 0 then
-			return compatibleCandidates[math.random(1, #compatibleCandidates)]
-		end
-		return parentA.SpeciesId
-	end
 end
 
 function BreedingService:Init()
@@ -328,21 +257,16 @@ function BreedingService:StartBreeding(player: Player, parentUUID_A: string, par
 	local defB = MonsterDefinitions.Get(parentB.SpeciesId)
 	if not defA or not defB then return false, "Invalid species definition" end
 
-	local isCompatible = false
-	for _, compElem in ipairs(defA.Breeding.CompatibleElements) do
-		if table.find(defB.Elements, compElem) then
-			isCompatible = true
-			break
-		end
-	end
-
-	if not isCompatible then
+	if not BreedingMath.AreCompatible(defA, defB) then
 		return false, "These two species are not elementally compatible for breeding"
 	end
 
 	-- Calculate breeding outcome
-	local childSpecies = determineChildSpecies(parentA, parentB)
-	local childIVs = inheritIVs(parentA, parentB)
+	local childSpecies, isMutation = BreedingMath.DetermineChildSpecies(parentA.SpeciesId, parentB.SpeciesId)
+	if isMutation then
+		Logger:Info("BREEDING", "Discovery! Rare mutation recipe triggered: %s", childSpecies)
+	end
+	local childIVs = BreedingMath.InheritIVs(parentA.IVs, parentB.IVs)
 	local duration = Config.BREEDING.DEFAULT_BREED_TIME_SECONDS
 	local now = os.time()
 	local sessionId = HttpService:GenerateGUID(false)

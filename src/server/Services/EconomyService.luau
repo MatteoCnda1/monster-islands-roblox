@@ -3,18 +3,13 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Logger = require(ReplicatedStorage.Shared.Utility.Logger)
 local Network = require(ReplicatedStorage.Shared.Utility.Network)
+local EconomyMath = require(ReplicatedStorage.Shared.EconomyMath)
 
 local PlayerDataService: any = nil
 
 local EconomyService = {}
 
-local function isValidAmount(amount: any): boolean
-	if typeof(amount) ~= "number" then return false end
-	if amount <= 0 then return false end
-	if amount ~= amount then return false end -- NaN check
-	if amount == math.huge or amount == -math.huge then return false end
-	return true
-end
+local isValidAmount = EconomyMath.IsValidAmount
 
 function EconomyService:Init()
 	Logger:Info("ECONOMY", "Initializing EconomyService...")

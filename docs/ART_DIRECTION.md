@@ -20,7 +20,7 @@ Dans l'univers Roblox :
 | Gabarit | Exemples | Hauteur (Studs) | Emprise au Sol | Utilisation |
 |---|---|---|---|---|
 | **Small** | `Emberfox`, `Zephlyn` | 3.5 à 5.0 | 4x4 studs | Créatures véloces, agiles |
-| **Medium** | `Aquaphin`, `Noctyra` | 5.0 à 6.5 | 6x6 studs | Combattants équilibrés |
+| **Medium** | `Aquaphin`, `Noctyra`, `Voidfox` | 5.0 à 6.5 | 6x6 studs | Combattants équilibrés |
 | **Large** | `Mossaur` | 7.0 à 9.5 | 8x8 studs | Tanks, géants colossaux |
 
 ### Pivot et Orientation

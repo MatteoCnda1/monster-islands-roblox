@@ -34,7 +34,7 @@ En fin de session, mettre à jour l'état avec `/handoff` (ou `bash .ai/ctx.sh` 
 - `src/server` → `ServerScriptService.Server`
 - `src/client` → `StarterPlayer.StarterPlayerScripts.Client`
 
-`src/modules/` est vide et non mappé par Rojo (malgré le README).
+Il n'existe pas de `src/modules/` versionné (dossier vide, non mappé par Rojo) : les utilitaires génériques vont dans `src/shared/Utility/`.
 
 ### Cycle de vie Services / Controllers
 - `ServerBootstrap.server.luau` construit d'abord **toute la carte de manière procédurale** (`Workspace.WorldMap` :
@@ -74,7 +74,7 @@ En fin de session, mettre à jour l'état avec `/handoff` (ou `bash .ai/ctx.sh` 
 - `MonsterDefinitions.luau` (espèces + `CalculateStats`), `AttackDefinitions.luau`, `ElementDefinitions.luau`
   (matrice d'efficacité).
 - Les modèles 3D (monstres, œufs, décorations) sont **générés procéduralement en code** (ex.
-  `MonsterService.buildProceduralMonsterModel`) ; `assets/` est vide.
+  `MonsterService.buildProceduralMonsterModel`) ; `assets/` ne contient que la structure prévue (`assets/README.md` + `.gitkeep`), non mappée par Rojo.
 
 ### Côté client
 - `UIController` (le plus gros fichier) construit toute l'UI en code et orchestre les onglets ;

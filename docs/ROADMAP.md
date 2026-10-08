@@ -25,7 +25,7 @@ flowchart LR
 - [x] Spawning du joueur et initialisation sécurisée du profil
 - [x] Attribution de la première parcelle gratuite
 - [x] Déblocage et achat de la seconde parcelle via l'économie
-- [x] Registre des 5 monstres prototypes (`Emberfox`, `Mossaur`, `Aquaphin`, `Zephlyn`, `Noctyra`)
+- [x] Registre des 6 monstres prototypes : 5 espèces de base (`Emberfox`, `Mossaur`, `Aquaphin`, `Zephlyn`, `Noctyra`) + 1 mutation légendaire (`Voidfox`, issu d'`Emberfox` + `Noctyra`)
 - [x] Affichage 3D d'un monstre placé sur sa parcelle
 - [x] Interface de Collection (Affichage des statistiques, éléments, niveau)
 - [x] Système de Reproduction (Breeding) avec hérédité de stats et découverte

@@ -85,8 +85,15 @@ export type PlotConfig = {
 	CostGems: number,
 	RequiredLevel: number,
 	Size: Vector3,
-	WorldPosition: Vector3,
+	LocalPosition: Vector3, -- Relative to the owner's island slot origin (see PlotSlots)
 	MaxMonstersCapacity: number,
+}
+
+-- Payload of the "PlotSlotAssigned" server -> client event (per-player plot islands, issue #21)
+export type PlotSlotAssignment = {
+	SlotIndex: number?, -- nil when every island of the server is taken
+	Origin: Vector3?,
+	MaxSlots: number,
 }
 
 export type PlacedDecoration = {

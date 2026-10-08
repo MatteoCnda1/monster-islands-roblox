@@ -70,7 +70,12 @@ En fin de session, mettre à jour l'état avec `/handoff` (ou `bash .ai/ctx.sh` 
 
 ### Données data-driven (`src/shared`)
 - `Types.luau` : tous les types partagés (modifier ici d'abord).
-- `Config.luau` : constantes de jeu (parcelles avec position monde/coût/capacité, monnaies de départ, autosave…).
+- `Config.luau` : constantes de jeu (parcelles avec position **relative au slot**/coût/capacité, `PLOT_SLOTS`,
+  monnaies de départ, autosave…).
+- Parcelles par joueur (issue #21) : `PlotService` attribue à chaque joueur un slot = une île annexe (géométrie
+  dans `PlotSlots.luau`, îles + ponts construits par le bootstrap), y construit ses parcelles dans
+  `Workspace.Plots.Slot_<n>` et libère tout (parcelles, décorations, monstres rendus) à son départ. Les invites
+  d'achat sont créées côté client par `PlotController`, uniquement sur les parcelles du joueur local.
 - `MonsterDefinitions.luau` (espèces + `CalculateStats`), `AttackDefinitions.luau`, `ElementDefinitions.luau`
   (matrice d'efficacité).
 - Les modèles 3D (monstres, œufs, décorations) sont **générés procéduralement en code** (ex.

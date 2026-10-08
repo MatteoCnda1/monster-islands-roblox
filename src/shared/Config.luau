@@ -21,7 +21,20 @@ local Config = {
 
 	MAX_TEAM_SIZE = 3,
 
-	-- Plots Configuration
+	-- Per-player plot islands (issue #21): every player is given one slot (an annex island linked
+	-- to the hub by a bridge) when joining, holding their own copy of PLOTS. Freed when they leave.
+	PLOT_SLOTS = {
+		MAX_SLOTS = 8, -- Keep the place's "Max Players" <= this value; extra players get no island
+		RING_RADIUS = 250, -- Hub center -> island center distance (>= ~230 to avoid island overlap with 8 slots)
+		RING_ANGLE_OFFSET_DEGREES = 22.5, -- Keeps islands and bridges clear of the arena (N) and sanctuary (W)
+		ISLAND_SIZE = Vector3.new(112, 4, 160), -- Must contain every PLOTS entry (LocalPosition +/- Size / 2)
+		BRIDGE_START_RADIUS = 12, -- Bridges start next to the village spawn
+		BRIDGE_WIDTH = 8,
+		SPAWN_LOCAL_POSITION = Vector3.new(0, 5, 19), -- Island plaza, between the plot rows and plot 5
+		TELEPORT_ON_FIRST_SPAWN = true,
+	},
+
+	-- Plots Configuration (LocalPosition is relative to the owner's slot origin, island top at y = 2)
 	PLOTS = {
 		{
 			Id = 1,
@@ -30,7 +43,7 @@ local Config = {
 			CostGems = 0,
 			RequiredLevel = 1,
 			Size = Vector3.new(36, 4, 36),
-			WorldPosition = Vector3.new(-45, 2, -45),
+			LocalPosition = Vector3.new(-24, 2, -54),
 			MaxMonstersCapacity = 2,
 		},
 		{
@@ -40,7 +53,7 @@ local Config = {
 			CostGems = 0,
 			RequiredLevel = 1,
 			Size = Vector3.new(36, 4, 36),
-			WorldPosition = Vector3.new(45, 2, -45),
+			LocalPosition = Vector3.new(24, 2, -54),
 			MaxMonstersCapacity = 2,
 		},
 		{
@@ -50,7 +63,7 @@ local Config = {
 			CostGems = 0,
 			RequiredLevel = 2,
 			Size = Vector3.new(36, 4, 36),
-			WorldPosition = Vector3.new(-45, 2, 45),
+			LocalPosition = Vector3.new(-24, 2, -6),
 			MaxMonstersCapacity = 3,
 		},
 		{
@@ -60,7 +73,7 @@ local Config = {
 			CostGems = 0,
 			RequiredLevel = 3,
 			Size = Vector3.new(36, 4, 36),
-			WorldPosition = Vector3.new(45, 2, 45),
+			LocalPosition = Vector3.new(24, 2, -6),
 			MaxMonstersCapacity = 3,
 		},
 		{
@@ -70,7 +83,7 @@ local Config = {
 			CostGems = 10,
 			RequiredLevel = 5,
 			Size = Vector3.new(48, 6, 48),
-			WorldPosition = Vector3.new(0, 4, 110),
+			LocalPosition = Vector3.new(0, 4, 50),
 			MaxMonstersCapacity = 5,
 		},
 	} :: { Types.PlotConfig },

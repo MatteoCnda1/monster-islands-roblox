@@ -1,6 +1,9 @@
 --!strict
+local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
 
 local Types = require(ReplicatedStorage.Shared.Types)
 local Config = require(ReplicatedStorage.Shared.Config)
@@ -11,13 +14,136 @@ local Network = require(ReplicatedStorage.Shared.Utility.Network)
 local PlayerDataService: any = nil
 local MonsterService: any = nil
 
+local physicalEggModels: { [string]: Model } = {}
+local eggsFolder: Folder
+
 local BreedingService = {}
+
+local function getEggsFolder(): Folder
+	local folder = Workspace:FindFirstChild("BreedingEggs") :: Folder
+	if not folder then
+		folder = Instance.new("Folder")
+		folder.Name = "BreedingEggs"
+		folder.Parent = Workspace
+	end
+	return folder
+end
 
 -- Special rare mutation recipes
 local MUTATION_RECIPES: { [string]: string } = {
 	["emberfox+noctyra"] = "voidfox",
 	["noctyra+emberfox"] = "voidfox",
 }
+
+local function buildProceduralEggModel(
+	session: Types.BreedingSession,
+	player: Player,
+	onHatchTriggered: (Player, string) -> ()
+): Model
+	local model = Instance.new("Model")
+	model.Name = "Egg_" .. session.Id
+
+	local sanctuary = Workspace:FindFirstChild("WorldMap") and Workspace.WorldMap:FindFirstChild("BreedingSanctuary")
+	local nest = sanctuary and sanctuary:FindFirstChild("BreedingNest") :: Part?
+	local nestPos = nest and (nest.Position + Vector3.new(0, 2.5, 0)) or Vector3.new(-85, 6.5, 0)
+
+	local angle = math.random() * math.pi * 2
+	local radius = math.random() * 2.5
+	local eggPos = nestPos + Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
+
+	local def = MonsterDefinitions.Get(session.EggSpeciesId)
+	local primaryColor = def and def.PrimaryColor or Color3.fromRGB(240, 200, 150)
+	local secondaryColor = def and def.SecondaryColor or Color3.fromRGB(255, 100, 120)
+
+	-- Base egg shell
+	local eggShell = Instance.new("Part")
+	eggShell.Name = "EggShell"
+	eggShell.Shape = Enum.PartType.Ball
+	eggShell.Size = Vector3.new(3.0, 4.2, 3.0)
+	eggShell.Position = eggPos
+	eggShell.Color = primaryColor
+	eggShell.Material = Enum.Material.SmoothPlastic
+	eggShell.Anchored = true
+	eggShell.CanCollide = true
+	eggShell.Parent = model
+	model.PrimaryPart = eggShell
+
+	-- Luminous elemental ring around the egg
+	local ring = Instance.new("Part")
+	ring.Name = "ElementalRing"
+	ring.Shape = Enum.PartType.Cylinder
+	ring.Size = Vector3.new(0.5, 3.3, 3.3)
+	ring.CFrame = eggShell.CFrame * CFrame.Angles(0, 0, math.rad(90))
+	ring.Color = secondaryColor
+	ring.Material = Enum.Material.Neon
+	ring.Anchored = true
+	ring.CanCollide = false
+	ring.Parent = model
+
+	-- Floating BillboardGui
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "EggBillboard"
+	billboard.Size = UDim2.new(0, 180, 0, 55)
+	billboard.StudsOffset = Vector3.new(0, 3.2, 0)
+	billboard.AlwaysOnTop = true
+	billboard.MaxDistance = 70
+	billboard.Parent = eggShell
+
+	local titleLabel = Instance.new("TextLabel")
+	titleLabel.Name = "TitleLabel"
+	titleLabel.Size = UDim2.new(1, 0, 0.45, 0)
+	titleLabel.BackgroundTransparency = 1
+	titleLabel.Text = string.format("🥚 %s Egg", def and def.DisplayName or session.EggSpeciesId)
+	titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	titleLabel.Font = Enum.Font.GothamBold
+	titleLabel.TextScaled = true
+	titleLabel.Parent = billboard
+
+	local statusLabel = Instance.new("TextLabel")
+	statusLabel.Name = "StatusLabel"
+	statusLabel.Size = UDim2.new(1, 0, 0.45, 0)
+	statusLabel.Position = UDim2.new(0, 0, 0.5, 0)
+	statusLabel.BackgroundTransparency = 1
+	statusLabel.Font = Enum.Font.GothamMedium
+	statusLabel.TextScaled = true
+	statusLabel.Parent = billboard
+
+	-- ProximityPrompt for physical hatching
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "HatchPrompt"
+	prompt.ActionText = "🐣 Hatch Egg"
+	prompt.ObjectText = def and def.DisplayName or session.EggSpeciesId
+	prompt.HoldDuration = 0.5
+	prompt.MaxActivationDistance = 12
+	prompt.Enabled = false
+	prompt.Parent = eggShell
+
+	prompt.Triggered:Connect(function(triggeringPlayer)
+		if triggeringPlayer.UserId == player.UserId then
+			onHatchTriggered(triggeringPlayer, session.Id)
+		end
+	end)
+
+	-- Live countdown and state updater
+	task.spawn(function()
+		while model.Parent and prompt.Parent do
+			local now = os.time()
+			if now >= session.EggReadyAt then
+				statusLabel.Text = "✨ READY TO HATCH! ✨"
+				statusLabel.TextColor3 = Color3.fromRGB(100, 255, 120)
+				prompt.Enabled = true
+			else
+				local remain = session.EggReadyAt - now
+				statusLabel.Text = string.format("Incubating (%ds)", remain)
+				statusLabel.TextColor3 = Color3.fromRGB(255, 215, 80)
+				prompt.Enabled = false
+			end
+			task.wait(1)
+		end
+	end)
+
+	return model
+end
 
 local function inheritIVs(parentA: Types.MonsterInstance, parentB: Types.MonsterInstance): Types.MonsterIVs
 	local stats = { "Health", "Attack", "Defense", "Speed" }
@@ -89,6 +215,7 @@ function BreedingService:Init()
 	Logger:Info("BREEDING", "Initializing BreedingService...")
 	PlayerDataService = require(script.Parent.PlayerDataService)
 	MonsterService = require(script.Parent.MonsterService)
+	eggsFolder = getEggsFolder()
 
 	-- Remotes
 	Network.HandleFunction("StartBreeding", function(player: Player, payload: any)
@@ -107,7 +234,69 @@ function BreedingService:Init()
 end
 
 function BreedingService:Start()
-	-- Ready
+	Network.HandleEvent("RefreshBreedingEggs", function(player: Player)
+		self:RestoreActiveEggs(player)
+	end)
+
+	Players.PlayerAdded:Connect(function(player: Player)
+		task.wait(1.5)
+		self:RestoreActiveEggs(player)
+	end)
+end
+
+function BreedingService:SpawnPhysicalEgg(player: Player, session: Types.BreedingSession)
+	if physicalEggModels[session.Id] then
+		return
+	end
+
+	local model = buildProceduralEggModel(session, player, function(triggeringPlayer, sessId)
+		self:HatchEggWithVFX(triggeringPlayer, sessId)
+	end)
+	model.Parent = eggsFolder
+	physicalEggModels[session.Id] = model
+end
+
+function BreedingService:DestroyPhysicalEgg(sessionId: string)
+	local model = physicalEggModels[sessionId]
+	if model then
+		model:Destroy()
+		physicalEggModels[sessionId] = nil
+	end
+end
+
+function BreedingService:HatchEggWithVFX(player: Player, sessionId: string)
+	local model = physicalEggModels[sessionId]
+	if model and model.PrimaryPart then
+		local part = model.PrimaryPart
+		local origCFrame = part.CFrame
+		-- Dramatic egg wobbling crack shake
+		for i = 1, 8 do
+			local offsetAngle = ((i % 2 == 0) and 1 or -1) * math.rad(14)
+			part.CFrame = origCFrame * CFrame.Angles(0, 0, offsetAngle)
+			task.wait(0.06)
+		end
+		part.CFrame = origCFrame
+
+		-- Flash light burst
+		local flash = Instance.new("PointLight")
+		flash.Color = Color3.fromRGB(255, 255, 200)
+		flash.Brightness = 8
+		flash.Range = 25
+		flash.Parent = part
+	end
+
+	self:ClaimHatchedEgg(player, sessionId)
+end
+
+function BreedingService:RestoreActiveEggs(player: Player)
+	local profile = PlayerDataService:GetProfile(player)
+	if not profile then return end
+
+	for _, session in pairs(profile.BreedingSessions) do
+		if not session.IsHatched and not physicalEggModels[session.Id] then
+			self:SpawnPhysicalEgg(player, session)
+		end
+	end
 end
 
 function BreedingService:StartBreeding(player: Player, parentUUID_A: string, parentUUID_B: string): (boolean, string?)
@@ -175,6 +364,9 @@ function BreedingService:StartBreeding(player: Player, parentUUID_A: string, par
 		prof.BreedingSessions[sessionId] = newSession
 	end)
 
+	-- Spawn physical egg model in the sanctuary nest
+	self:SpawnPhysicalEgg(player, newSession)
+
 	Logger:Info("BREEDING", "Player %s started breeding %s + %s -> Session %s (Ready in %ds)",
 		player.Name, defA.DisplayName, defB.DisplayName, sessionId, duration)
 
@@ -228,6 +420,9 @@ function BreedingService:ClaimHatchedEgg(player: Player, sessionId: string): (bo
 			s.IsHatched = true
 		end
 	end)
+
+	-- Destroy physical egg model from the nest
+	self:DestroyPhysicalEgg(sessionId)
 
 	Logger:Info("BREEDING", "Player %s hatched egg! New monster: %s (Gen %d, UUID: %s)",
 		player.Name, newMonster.SpeciesId, generation, newMonster.UUID)

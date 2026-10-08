@@ -1,4 +1,5 @@
 --!strict
+local Workspace = game:GetService("Workspace")
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -13,6 +14,19 @@ local Network = require(ReplicatedStorage.Shared.Utility.Network)
 local PlayerDataService: any = nil
 local EconomyService: any = nil
 local MonsterService: any = nil
+
+local battleArenasFolder: Folder
+local battle3DInstances: { [string]: { Folder: Folder, ModelA: Model, ModelB: Model } } = {}
+
+local function getBattleArenasFolder(): Folder
+	local folder = Workspace:FindFirstChild("ActiveBattleArenas") :: Folder
+	if not folder then
+		folder = Instance.new("Folder")
+		folder.Name = "ActiveBattleArenas"
+		folder.Parent = Workspace
+	end
+	return folder
+end
 
 type InternalCombatant = {
 	Player: Player?,
@@ -59,6 +73,7 @@ function CombatService:Init()
 	PlayerDataService = require(script.Parent.PlayerDataService)
 	EconomyService = require(script.Parent.EconomyService)
 	MonsterService = require(script.Parent.MonsterService)
+	battleArenasFolder = getBattleArenasFolder()
 
 	-- Remotes
 	Network.HandleFunction("SubmitBattleAction", function(player: Player, payload: any)
@@ -213,6 +228,43 @@ function CombatService:CreateBattle(playerA: Player, playerB: Player?, isBotPrac
 
 	Logger:Info("COMBAT", "Started battle %s (%s vs %s)", battleId, combatantA.Name, combatantB.Name)
 
+	-- Spawn 3D physical monsters facing each other in the battle arena
+	local posA = Vector3.new(-12, 4.2, -120)
+	local posB = Vector3.new(12, 4.2, -120)
+
+	local battleFolder = Instance.new("Folder")
+	battleFolder.Name = "Battle_" .. battleId
+	battleFolder.Parent = battleArenasFolder
+
+	local modelA = MonsterService:BuildBattleMonsterModel(combatantA.Team[combatantA.ActiveIndex])
+	if modelA.PrimaryPart then
+		modelA:SetPrimaryPartCFrame(CFrame.lookAt(posA, posB))
+	end
+	modelA.Parent = battleFolder
+
+	local modelB = MonsterService:BuildBattleMonsterModel(combatantB.Team[combatantB.ActiveIndex])
+	if modelB.PrimaryPart then
+		modelB:SetPrimaryPartCFrame(CFrame.lookAt(posB, posA))
+	end
+	modelB.Parent = battleFolder
+
+	battle3DInstances[battleId] = {
+		Folder = battleFolder,
+		ModelA = modelA,
+		ModelB = modelB,
+	}
+
+	-- Teleport combatants to arena podiums
+	if playerA and playerA.Character and playerA.Character:FindFirstChild("HumanoidRootPart") then
+		local hrp = playerA.Character:FindFirstChild("HumanoidRootPart") :: BasePart
+		hrp.CFrame = CFrame.lookAt(Vector3.new(-18, 7.5, -120), Vector3.new(0, 4, -120))
+	end
+
+	if playerB and playerB.Character and playerB.Character:FindFirstChild("HumanoidRootPart") then
+		local hrp = playerB.Character:FindFirstChild("HumanoidRootPart") :: BasePart
+		hrp.CFrame = CFrame.lookAt(Vector3.new(18, 7.5, -120), Vector3.new(0, 4, -120))
+	end
+
 	-- Notify player(s)
 	local startPayload = {
 		BattleId = battleId,
@@ -223,6 +275,9 @@ function CombatService:CreateBattle(playerA: Player, playerB: Player?, isBotPrac
 		OpponentName = combatantB.Name,
 		OpponentActiveMonster = combatantB.Team[1],
 		OpponentTeamCount = #combatantB.Team,
+		ArenaCenter = Vector3.new(0, 4, -120),
+		YourMonsterPosition = posA,
+		OpponentMonsterPosition = posB,
 	}
 	Network.FireClient("BattleStarted", playerA, startPayload)
 
@@ -236,6 +291,9 @@ function CombatService:CreateBattle(playerA: Player, playerB: Player?, isBotPrac
 			OpponentName = combatantA.Name,
 			OpponentActiveMonster = combatantA.Team[1],
 			OpponentTeamCount = #combatantA.Team,
+			ArenaCenter = Vector3.new(0, 4, -120),
+			YourMonsterPosition = posB,
+			OpponentMonsterPosition = posA,
 		}
 		Network.FireClient("BattleStarted", playerB, startPayloadB)
 	end
@@ -563,6 +621,26 @@ function CombatService:_finishBattle(battle: BattleInstance, winnerUserId: numbe
 	end
 
 	activeBattles[battle.Id] = nil
+
+	-- Destroy 3D arena monsters
+	local battle3D = battle3DInstances[battle.Id]
+	if battle3D then
+		if battle3D.Folder then battle3D.Folder:Destroy() end
+		battle3DInstances[battle.Id] = nil
+	end
+
+	-- Teleport players back to village spawn after short fanfare
+	task.delay(3.5, function()
+		if a.Player and a.Player.Character and a.Player.Character:FindFirstChild("HumanoidRootPart") then
+			local hrp = a.Player.Character:FindFirstChild("HumanoidRootPart") :: BasePart
+			hrp.CFrame = CFrame.new(0, 4, 0)
+		end
+		if b.Player and b.Player.Character and b.Player.Character:FindFirstChild("HumanoidRootPart") then
+			local hrp = b.Player.Character:FindFirstChild("HumanoidRootPart") :: BasePart
+			hrp.CFrame = CFrame.new(0, 4, 0)
+		end
+	end)
+
 	Logger:Info("COMBAT", "Battle %s ended. Winner User ID: %s", battle.Id, tostring(winnerUserId))
 end
 

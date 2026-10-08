@@ -1,4 +1,5 @@
 --!strict
+local Workspace = game:GetService("Workspace")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -8,6 +9,7 @@ local Logger = require(ReplicatedStorage.Shared.Utility.Logger)
 local Network = require(ReplicatedStorage.Shared.Utility.Network)
 local AttackDefinitions = require(ReplicatedStorage.Shared.AttackDefinitions)
 local MonsterDefinitions = require(ReplicatedStorage.Shared.MonsterDefinitions)
+local CameraController = require(script.Parent.CameraController)
 
 local localPlayer = Players.LocalPlayer
 local playerGui = localPlayer:WaitForChild("PlayerGui") :: PlayerGui
@@ -25,7 +27,77 @@ local CombatController = {
 	OpponentHPBar = nil :: Frame?,
 	OpponentHPText = nil :: TextLabel?,
 	SkillsContainer = nil :: Frame?,
+	ArenaCenter = nil :: Vector3?,
+	YourMonsterPosition = nil :: Vector3?,
+	OpponentMonsterPosition = nil :: Vector3?,
 }
+
+local function showFloatingDamageNumber(worldPos: Vector3, text: string, color: Color3, isCrit: boolean)
+	local part = Instance.new("Part")
+	part.Name = "DamagePart"
+	part.Size = Vector3.new(1, 1, 1)
+	part.Position = worldPos + Vector3.new(0, 3.5, 0)
+	part.Transparency = 1
+	part.CanCollide = false
+	part.Anchored = true
+	part.Parent = Workspace
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "DamageBillboard"
+	billboard.Size = isCrit and UDim2.new(0, 160, 0, 50) or UDim2.new(0, 120, 0, 40)
+	billboard.AlwaysOnTop = true
+	billboard.Parent = part
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.Text = text
+	label.TextColor3 = color
+	label.Font = Enum.Font.GothamBlack
+	label.TextScaled = true
+	label.Parent = billboard
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(10, 10, 10)
+	stroke.Thickness = 2
+	stroke.Parent = label
+
+	-- Float upwards and fade out
+	local tweenUp = TweenService:Create(billboard, TweenInfo.new(1.0, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		StudsOffset = Vector3.new(0, 4.5, 0),
+	})
+	local tweenFade = TweenService:Create(label, TweenInfo.new(1.0, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		TextTransparency = 1,
+	})
+	tweenUp:Play()
+	tweenFade:Play()
+
+	task.delay(1.1, function()
+		part:Destroy()
+	end)
+end
+
+local function spawnElementalImpactVFX(worldPos: Vector3, color: Color3)
+	local impactSphere = Instance.new("Part")
+	impactSphere.Shape = Enum.PartType.Ball
+	impactSphere.Size = Vector3.new(1.5, 1.5, 1.5)
+	impactSphere.Position = worldPos + Vector3.new(0, 1.5, 0)
+	impactSphere.Color = color
+	impactSphere.Material = Enum.Material.Neon
+	impactSphere.CanCollide = false
+	impactSphere.Anchored = true
+	impactSphere.Parent = Workspace
+
+	local tween = TweenService:Create(impactSphere, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		Size = Vector3.new(5.0, 5.0, 5.0),
+		Transparency = 1,
+	})
+	tween:Play()
+
+	task.delay(0.45, function()
+		impactSphere:Destroy()
+	end)
+end
 
 local function createRoundedCorner(parent: Instance, radius: number): UICorner
 	local corner = Instance.new("UICorner")
@@ -59,8 +131,14 @@ function CombatController:OnBattleStarted(data: any)
 	self.CurrentBattleId = data.BattleId
 	self.YourActiveMonster = data.YourTeam[data.YourActiveIndex or 1]
 	self.OpponentActiveMonster = data.OpponentActiveMonster
+	self.ArenaCenter = data.ArenaCenter or Vector3.new(0, 4, -120)
+	self.YourMonsterPosition = data.YourMonsterPosition or Vector3.new(-12, 4.2, -120)
+	self.OpponentMonsterPosition = data.OpponentMonsterPosition or Vector3.new(12, 4.2, -120)
 
 	self:_buildBattleOverlay(data)
+	if self.ArenaCenter then
+		CameraController:FocusOnBattle(self.ArenaCenter)
+	end
 	Logger:Info("COMBAT", "Battle overlay opened for battle %s vs %s", data.BattleId, data.OpponentName)
 end
 
@@ -252,11 +330,20 @@ end
 
 function CombatController:OnTurnReport(report: Types.TurnReport)
 	for _, action in ipairs(report.Actions) do
+		local isYouActor = (self.YourActiveMonster ~= nil and action.ActorUUID == self.YourActiveMonster.UUID)
+		local actorPos = isYouActor and self.YourMonsterPosition or self.OpponentMonsterPosition
+		local targetPos = isYouActor and self.OpponentMonsterPosition or self.YourMonsterPosition
+
+		-- Focus camera on the attacker
+		if actorPos then
+			CameraController:FocusOnCombatant(actorPos)
+		end
+
 		if self.LogLabel then
 			local critText = action.IsCritical and " CRITICAL HIT!" or ""
 			local elemText = (action.ElementMultiplier > 1.0) and " (Super Effective!)" or ""
 			self.LogLabel.Text = string.format("%s used %s! Dealt %d damage!%s%s",
-				(action.ActorUUID == self.YourActiveMonster.UUID) and "You" or "Opponent",
+				isYouActor and "You" or "Opponent",
 				action.SkillName or "Action",
 				action.DamageDealt,
 				critText,
@@ -264,8 +351,25 @@ function CombatController:OnTurnReport(report: Types.TurnReport)
 			)
 		end
 
+		task.wait(0.5)
+
+		-- Focus camera on target for impact & damage numbers
+		if targetPos then
+			CameraController:FocusOnCombatant(targetPos)
+			if action.DamageDealt > 0 then
+				local dmgColor = action.IsCritical and Color3.fromRGB(255, 190, 40) or Color3.fromRGB(240, 60, 60)
+				local dmgText = action.IsCritical and string.format("💥 CRIT! -%d", action.DamageDealt) or string.format("-%d", action.DamageDealt)
+				showFloatingDamageNumber(targetPos, dmgText, dmgColor, action.IsCritical)
+				spawnElementalImpactVFX(targetPos, dmgColor)
+			elseif action.SkillName and string.find(action.SkillName, "Miss") then
+				showFloatingDamageNumber(targetPos, "MISS", Color3.fromRGB(200, 200, 200), false)
+			elseif action.StatusApplied then
+				showFloatingDamageNumber(targetPos, "✨ " .. action.StatusApplied, Color3.fromRGB(100, 220, 255), false)
+			end
+		end
+
 		-- Update HP Bar
-		if action.TargetUUID == self.YourActiveMonster.UUID then
+		if self.YourActiveMonster and action.TargetUUID == self.YourActiveMonster.UUID then
 			self.YourActiveMonster.CurrentHealth = action.TargetRemainingHealth
 			local ratio = math.clamp(self.YourActiveMonster.CurrentHealth / self.YourActiveMonster.MaxHealth, 0, 1)
 			if self.YourHPBar then
@@ -285,7 +389,10 @@ function CombatController:OnTurnReport(report: Types.TurnReport)
 			end
 		end
 
-		task.wait(1.4)
+		task.wait(1.2)
+		if self.ArenaCenter then
+			CameraController:FocusOnBattle(self.ArenaCenter)
+		end
 	end
 
 	-- Re-enable skills container if battle is still ongoing
@@ -311,6 +418,7 @@ function CombatController:OnBattleEnded(result: any)
 		self.BattleOverlay:Destroy()
 		self.BattleOverlay = nil
 	end
+	CameraController:ResetToPlayer()
 end
 
 return CombatController

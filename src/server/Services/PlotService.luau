@@ -1,5 +1,6 @@
 --!strict
 local Workspace = game:GetService("Workspace")
+local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
@@ -14,6 +15,7 @@ local MonsterService: any = nil
 
 local plotsFolder: Folder
 local physicalPlotModels: { [number]: Model } = {}
+local physicalDecorationModels: { [string]: Model } = {} -- Keyed by DecorationUUID
 
 local PlotService = {}
 
@@ -148,6 +150,22 @@ function PlotService:Init()
 		end
 		return self:PlaceMonster(player, payload.PlotId, payload.MonsterUUID)
 	end)
+
+	-- Handle decoration placement request
+	Network.HandleFunction("PlacePlotDecoration", function(player: Player, payload: any)
+		if typeof(payload) ~= "table" or typeof(payload.PlotId) ~= "number" or typeof(payload.DecorationId) ~= "string" or typeof(payload.LocalX) ~= "number" or typeof(payload.LocalZ) ~= "number" then
+			return false, "Invalid decoration payload"
+		end
+		return self:PlaceDecoration(player, payload.PlotId, payload.DecorationId, payload.LocalX, payload.LocalZ, payload.RotationY or 0)
+	end)
+
+	-- Handle decoration removal
+	Network.HandleFunction("RemovePlotDecoration", function(player: Player, payload: any)
+		if typeof(payload) ~= "table" or typeof(payload.PlotId) ~= "number" or typeof(payload.DecorationUUID) ~= "string" then
+			return false, "Invalid decoration removal payload"
+		end
+		return self:RemoveDecoration(player, payload.PlotId, payload.DecorationUUID)
+	end)
 end
 
 function PlotService:Start()
@@ -170,6 +188,7 @@ function PlotService:Start()
 	-- Listen for profile loads to refresh plot appearance
 	Network.HandleEvent("RefreshPlotsRequest", function(player: Player)
 		self:UpdateClientPlotVisuals(player)
+		self:RenderPlayerDecorations(player)
 	end)
 end
 
@@ -228,6 +247,7 @@ function PlotService:PurchasePlot(player: Player, plotId: number): (boolean, str
 			IsUnlocked = true,
 			UnlockedAt = os.time(),
 			PlacedMonsters = {},
+			PlacedDecorations = {},
 		}
 	end)
 
@@ -348,6 +368,279 @@ function PlotService:UpdateClientPlotVisuals(player: Player)
 		local basePad = model:FindFirstChild("BasePad") :: Part
 		if basePad then
 			basePad.Color = isUnlocked and Color3.fromRGB(90, 180, 85) or Color3.fromRGB(70, 120, 70)
+		end
+	end
+end
+
+function PlotService:GetDecorationConfig(decorationId: string): Types.DecorationConfig?
+	for _, deco in ipairs(Config.DECORATIONS) do
+		if deco.Id == decorationId then
+			return deco
+		end
+	end
+	return nil
+end
+
+local function buildProceduralDecorationModel(config: Types.DecorationConfig, worldPosition: Vector3, rotationY: number): Model
+	local model = Instance.new("Model")
+	model.Name = "Deco_" .. config.Id
+
+	if config.Id == "Fence_Wood" then
+		local post1 = Instance.new("Part")
+		post1.Size = Vector3.new(0.6, 3.2, 0.6)
+		post1.Position = worldPosition + Vector3.new(-1.8, 1.6, 0)
+		post1.Color = config.SecondaryColor
+		post1.Material = Enum.Material.Wood
+		post1.Anchored = true
+		post1.Parent = model
+
+		local post2 = Instance.new("Part")
+		post2.Size = Vector3.new(0.6, 3.2, 0.6)
+		post2.Position = worldPosition + Vector3.new(1.8, 1.6, 0)
+		post2.Color = config.SecondaryColor
+		post2.Material = Enum.Material.Wood
+		post2.Anchored = true
+		post2.Parent = model
+
+		local rail1 = Instance.new("Part")
+		rail1.Size = Vector3.new(3.8, 0.4, 0.3)
+		rail1.Position = worldPosition + Vector3.new(0, 1.0, 0)
+		rail1.Color = config.PrimaryColor
+		rail1.Material = Enum.Material.WoodPlanks
+		rail1.Anchored = true
+		rail1.Parent = model
+
+		local rail2 = Instance.new("Part")
+		rail2.Size = Vector3.new(3.8, 0.4, 0.3)
+		rail2.Position = worldPosition + Vector3.new(0, 2.2, 0)
+		rail2.Color = config.PrimaryColor
+		rail2.Material = Enum.Material.WoodPlanks
+		rail2.Anchored = true
+		rail2.Parent = model
+
+		model.PrimaryPart = post1
+
+	elseif config.Id == "Lantern_Pillar" then
+		local base = Instance.new("Part")
+		base.Size = Vector3.new(1.8, 4.5, 1.8)
+		base.Position = worldPosition + Vector3.new(0, 2.25, 0)
+		base.Color = config.PrimaryColor
+		base.Material = Enum.Material.Slate
+		base.Anchored = true
+		base.Parent = model
+
+		local lantern = Instance.new("Part")
+		lantern.Size = Vector3.new(1.2, 1.5, 1.2)
+		lantern.Position = worldPosition + Vector3.new(0, 5.0, 0)
+		lantern.Color = config.SecondaryColor
+		lantern.Material = Enum.Material.Neon
+		lantern.Anchored = true
+		lantern.Parent = model
+
+		local light = Instance.new("PointLight")
+		light.Color = config.SecondaryColor
+		light.Brightness = 2.5
+		light.Range = 16
+		light.Parent = lantern
+
+		model.PrimaryPart = base
+
+	elseif config.Id == "Elemental_Flower" then
+		local stem = Instance.new("Part")
+		stem.Size = Vector3.new(0.4, 1.6, 0.4)
+		stem.Position = worldPosition + Vector3.new(0, 0.8, 0)
+		stem.Color = config.SecondaryColor
+		stem.Material = Enum.Material.Grass
+		stem.Anchored = true
+		stem.Parent = model
+
+		local blossom = Instance.new("Part")
+		blossom.Size = Vector3.new(2.4, 0.6, 2.4)
+		blossom.Position = worldPosition + Vector3.new(0, 1.8, 0)
+		blossom.Color = config.PrimaryColor
+		blossom.Material = Enum.Material.Neon
+		blossom.Anchored = true
+		blossom.Parent = model
+
+		model.PrimaryPart = stem
+
+	elseif config.Id == "Stone_Bench" then
+		local seat = Instance.new("Part")
+		seat.Size = Vector3.new(4, 0.5, 1.8)
+		seat.Position = worldPosition + Vector3.new(0, 1.4, 0)
+		seat.Color = config.PrimaryColor
+		seat.Material = Enum.Material.Cobblestone
+		seat.Anchored = true
+		seat.Parent = model
+
+		for _, mult in ipairs({ -1.5, 1.5 }) do
+			local leg = Instance.new("Part")
+			leg.Size = Vector3.new(0.6, 1.4, 1.6)
+			leg.Position = worldPosition + Vector3.new(mult * 1.5, 0.7, 0)
+			leg.Color = config.SecondaryColor
+			leg.Material = Enum.Material.Slate
+			leg.Anchored = true
+			leg.Parent = model
+		end
+
+		model.PrimaryPart = seat
+
+	elseif config.Id == "Training_Dummy" then
+		local stand = Instance.new("Part")
+		stand.Size = Vector3.new(0.6, 3.5, 0.6)
+		stand.Position = worldPosition + Vector3.new(0, 1.75, 0)
+		stand.Color = Color3.fromRGB(90, 60, 30)
+		stand.Material = Enum.Material.Wood
+		stand.Anchored = true
+		stand.Parent = model
+
+		local torso = Instance.new("Part")
+		torso.Size = Vector3.new(2.2, 2.8, 1.2)
+		torso.Position = worldPosition + Vector3.new(0, 3.2, 0)
+		torso.Color = config.PrimaryColor
+		torso.Material = Enum.Material.Fabric
+		torso.Anchored = true
+		torso.Parent = model
+
+		local target = Instance.new("Part")
+		target.Size = Vector3.new(1.0, 1.0, 0.2)
+		target.Position = torso.Position + Vector3.new(0, 0, -0.65)
+		target.Color = config.SecondaryColor
+		target.Material = Enum.Material.Neon
+		target.Anchored = true
+		target.Parent = model
+
+		model.PrimaryPart = stand
+	end
+
+	return model
+end
+
+function PlotService:PlaceDecoration(
+	player: Player,
+	plotId: number,
+	decorationId: string,
+	localX: number,
+	localZ: number,
+	rotationY: number
+): (boolean, any)
+	local plotConfig = self:GetPlotConfig(plotId)
+	if not plotConfig then return false, "Plot does not exist" end
+
+	local decoConfig = self:GetDecorationConfig(decorationId)
+	if not decoConfig then return false, "Decoration does not exist" end
+
+	local profile = PlayerDataService:GetProfile(player)
+	if not profile then return false, "No player profile" end
+
+	local plotKey = tostring(plotId)
+	local plotData = profile.Plots[plotKey]
+	if not plotData or not plotData.IsUnlocked then
+		return false, "Plot is locked"
+	end
+
+	-- Bounds check within plot dimensions
+	local halfX = (plotConfig.Size.X / 2) - 2
+	local halfZ = (plotConfig.Size.Z / 2) - 2
+
+	-- Grid snapping to Config.PLOT_GRID_SIZE
+	local gridSize = Config.PLOT_GRID_SIZE or 4
+	local snappedX = math.clamp(math.round(localX / gridSize) * gridSize, -halfX, halfX)
+	local snappedZ = math.clamp(math.round(localZ / gridSize) * gridSize, -halfZ, halfZ)
+
+	-- Check coins and deduct
+	if decoConfig.CostCoins > 0 then
+		local deducted = EconomyService:DeductCoins(player, decoConfig.CostCoins, "Place Deco: " .. decoConfig.Name)
+		if not deducted then
+			return false, "Not enough Coins"
+		end
+	end
+
+	local decoUUID = HttpService:GenerateGUID(false)
+	local placedDeco: Types.PlacedDecoration = {
+		UUID = decoUUID,
+		DecorationId = decorationId,
+		PositionX = snappedX,
+		PositionY = (plotConfig.Size.Y / 2),
+		PositionZ = snappedZ,
+		RotationY = rotationY,
+		PlacedAt = os.time(),
+	}
+
+	PlayerDataService:UpdateProfile(player, function(prof)
+		local p = prof.Plots[plotKey]
+		if not p.PlacedDecorations then p.PlacedDecorations = {} end
+		table.insert(p.PlacedDecorations, placedDeco)
+	end)
+
+	-- Spawn physical model in workspace
+	local worldPos = plotConfig.WorldPosition + Vector3.new(snappedX, (plotConfig.Size.Y / 2), snappedZ)
+	local model = buildProceduralDecorationModel(decoConfig, worldPos, rotationY)
+	model.Parent = plotsFolder
+	physicalDecorationModels[decoUUID] = model
+
+	Logger:Info("PLOT", "Player %s placed %s on Plot %d at (%d, %d)", player.Name, decoConfig.Name, plotId, snappedX, snappedZ)
+	Network.FireClient("DecorationPlaced", player, { PlotId = plotId, Decoration = placedDeco })
+	return true, placedDeco
+end
+
+function PlotService:RemoveDecoration(player: Player, plotId: number, decorationUUID: string): (boolean, string?)
+	local profile = PlayerDataService:GetProfile(player)
+	if not profile then return false, "No player profile" end
+
+	local plotKey = tostring(plotId)
+	local plotData = profile.Plots[plotKey]
+	if not plotData or not plotData.PlacedDecorations then return false, "No decorations on plot" end
+
+	local foundIdx: number? = nil
+	for idx, deco in ipairs(plotData.PlacedDecorations) do
+		if deco.UUID == decorationUUID then
+			foundIdx = idx
+			break
+		end
+	end
+
+	if not foundIdx then
+		return false, "Decoration not found"
+	end
+
+	PlayerDataService:UpdateProfile(player, function(prof)
+		local p = prof.Plots[plotKey]
+		if p and p.PlacedDecorations then
+			table.remove(p.PlacedDecorations, foundIdx)
+		end
+	end)
+
+	-- Destroy 3D model
+	local model = physicalDecorationModels[decorationUUID]
+	if model then
+		model:Destroy()
+		physicalDecorationModels[decorationUUID] = nil
+	end
+
+	Logger:Info("PLOT", "Player %s removed decoration %s from Plot %d", player.Name, decorationUUID, plotId)
+	return true, nil
+end
+
+function PlotService:RenderPlayerDecorations(player: Player)
+	local profile = PlayerDataService:GetProfile(player)
+	if not profile then return end
+
+	for plotKey, plotData in pairs(profile.Plots) do
+		local plotId = tonumber(plotKey) or plotData.Id
+		local plotConfig = self:GetPlotConfig(plotId)
+		if plotConfig and plotData.PlacedDecorations then
+			for _, placedDeco in ipairs(plotData.PlacedDecorations) do
+				if not physicalDecorationModels[placedDeco.UUID] then
+					local decoConfig = self:GetDecorationConfig(placedDeco.DecorationId)
+					if decoConfig then
+						local worldPos = plotConfig.WorldPosition + Vector3.new(placedDeco.PositionX, placedDeco.PositionY, placedDeco.PositionZ)
+						local model = buildProceduralDecorationModel(decoConfig, worldPos, placedDeco.RotationY or 0)
+						model.Parent = plotsFolder
+						physicalDecorationModels[placedDeco.UUID] = model
+					end
+				end
+			end
 		end
 	end
 end
